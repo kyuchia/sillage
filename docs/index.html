@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>MTL Pulse</title>
+<title>sillage</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 
 <script src="https://unpkg.com/deck.gl@9.0.33/dist.min.js"></script>
@@ -189,7 +189,7 @@
 
 <div id="panel">
   <div id="panelHead">
-    <h1>MTL PULSE</h1>
+    <h1>SILLAGE</h1>
     <div id="panelBtns">
       <button class="iconbtn" id="collapseBtn" title="Collapse panel" aria-label="Collapse panel">
         <svg id="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -209,6 +209,11 @@
   <div id="live">&nbsp;</div>
   <div id="source"></div>
   <div id="banner"></div>
+
+  <div class="row" id="sceneRow" style="display:none">
+    <label>Scene</label>
+    <select id="sceneSel" style="flex:1"></select>
+  </div>
 
   <div class="row">
     <label>Time</label>
@@ -540,28 +545,95 @@ function showSource(data, state) {
   bits.push("<b>" + fmtClock(data.start_time) + "</b> → <b>" +
             fmtClock(data.end_time) + "</b>");
   bits.push("modes <b>" + modes + "</b>");
-  bits.push(state.live ? "source <b>/api/trips</b>" : "source <b>static file</b>");
+  bits.push(state.live ? "source <b>/api/trips</b>"
+          : state.scene ? "source <b>curated scene</b>"
+          : "source <b>static file</b>");
   if (state.derived) bits.push("window: " + state.derived);
   else if (state.live) bits.push("window: from URL");
   el.innerHTML = bits.join(" · ");
   el.className = state.live ? "live" : "";
 }
 
-const loadState = { live: false, derived: null, url: null, forwarded: [] };
+const loadState = { live: false, scene: null, derived: null, url: null, forwarded: [] };
 
-loadFromApi(loadState)
-  .then(data => { loadState.live = true; return data; })
-  .catch(err => {
-    // Loud, in the panel — not just the console.
-    banner("API unavailable: " + err.message +
-           "<br>Showing static <code>" + STATIC_URL + "</code> instead — " +
-           "this is <b>not</b> the window you asked for.", false);
+/* ------------------------------------------------------------------
+   Curated scenes (GitHub Pages mode).
+
+   On github.io there is no backend and never will be: baked scenes in
+   docs/scenes/ are THE mode, not a fallback, so no warning banner —
+   design decision #10 is about SILENT fallbacks, not about deliberately
+   static deployments. Locally the API stays first; scenes serve as a
+   loud fallback if it is down; the old ../data/trips.json remains the
+   last resort.
+   ------------------------------------------------------------------ */
+const SCENES_URL = "scenes/manifest.json";
+const ON_PAGES = location.hostname.endsWith("github.io");
+
+async function fetchManifest() {
+  try {
+    const r = await fetch(SCENES_URL, { cache: "no-cache" });
+    return r.ok ? await r.json() : null;
+  } catch (e) { return null; }
+}
+
+function buildScenePicker(manifest, current) {
+  const sel = document.getElementById("sceneSel");
+  sel.innerHTML = "";
+  for (const sc of manifest.scenes) {
+    const o = document.createElement("option");
+    o.value = sc.slug;
+    o.textContent = sc.label;
+    if (sc.slug === current) o.selected = true;
+    sel.appendChild(o);
+  }
+  // Full reload on change: init() builds the map and closures exactly once,
+  // and a clean reload is simpler and safer than tearing all of that down.
+  sel.addEventListener("change", () => {
+    const u = new URL(location.href);
+    u.searchParams.set("scene", sel.value);
+    location.href = u.toString();
+  });
+  document.getElementById("sceneRow").style.display = "flex";
+}
+
+async function loadScene(manifest) {
+  const q = new URLSearchParams(location.search);
+  const slug = q.get("scene") || manifest.scenes[0].slug;
+  const sc = manifest.scenes.find(x => x.slug === slug) || manifest.scenes[0];
+  buildScenePicker(manifest, sc.slug);
+  const r = await fetch("scenes/" + sc.file);
+  if (!r.ok) throw new Error("scenes/" + sc.file + " -> " + r.status);
+  loadState.scene = sc.slug;
+  return r.json();
+}
+
+async function boot() {
+  if (ON_PAGES) {
+    const m = await fetchManifest();
+    if (!m) throw new Error("scenes/manifest.json missing - run scripts/bake_scenes.sh and commit docs/scenes/");
+    return loadScene(m);
+  }
+  try {
+    const data = await loadFromApi(loadState);
+    loadState.live = true;
+    return data;
+  } catch (err) {
     console.warn("API load failed:", err.message);
-    return fetch(STATIC_URL).then(r => {
-      if (!r.ok) throw new Error(STATIC_URL + " → " + r.status);
-      return r.json();
-    });
-  })
+    const m = await fetchManifest();
+    if (m) {
+      banner("API unavailable: " + err.message + "<br>Showing baked scenes instead.", false);
+      return loadScene(m);
+    }
+    banner("API unavailable: " + err.message +
+           "<br>Showing static <code>" + STATIC_URL + "</code> instead - " +
+           "this is <b>not</b> the window you asked for.", false);
+    const r = await fetch(STATIC_URL);
+    if (!r.ok) throw new Error(STATIC_URL + " -> " + r.status);
+    return r.json();
+  }
+}
+
+boot()
   .then(data => { init(data); showSource(data, loadState); })
   .catch(err => {
     document.getElementById("stats").textContent = "Load failed";
