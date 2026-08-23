@@ -23,12 +23,12 @@
     <array>
         <string>/usr/bin/caffeinate</string>
         <string>-i</string>
-        <string>/Users/chia/Desktop/Chia/personal_project/mtl-pulse/venv/bin/python</string>
-        <string>/Users/chia/Desktop/Chia/personal_project/mtl-pulse/fetchers/opensky_fetcher.py</string>
+        <string>/Users/chia/Desktop/Chia/personal_project/sillage/venv/bin/python</string>
+        <string>/Users/chia/Desktop/Chia/personal_project/sillage/fetchers/opensky_fetcher.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/chia/Desktop/Chia/personal_project/mtl-pulse</string>
+    <string>/Users/chia/Desktop/Chia/personal_project/sillage</string>
 
     <!-- Non-secret only. -->
     <key>EnvironmentVariables</key>
@@ -56,8 +56,8 @@
     <string>Interactive</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/chia/Desktop/Chia/personal_project/mtl-pulse/fetchers/logs/opensky-launchd.out</string>
+    <string>/Users/chia/Desktop/Chia/personal_project/sillage/fetchers/logs/opensky-launchd.out</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chia/Desktop/Chia/personal_project/mtl-pulse/fetchers/logs/opensky-launchd.err</string>
+    <string>/Users/chia/Desktop/Chia/personal_project/sillage/fetchers/logs/opensky-launchd.err</string>
 </dict>
 </plist>
