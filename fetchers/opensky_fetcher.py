@@ -28,7 +28,7 @@ from health import FetchHealth
 from secrets import describe, get_secret
 
 BBOX = {"min_lat": 45.20, "max_lat": 45.85, "min_lon": -74.20, "max_lon": -73.20}
-PG_DSN = os.environ.get("PG_DSN", "dbname=mtl_pulse")
+PG_DSN = os.environ.get("PG_DSN", "dbname=sillage")
 # 20s matches the bus fetcher: aircraft do not need finer sampling than buses, and a
 # shared cadence keeps the replay timeline clean.
 POLL_INTERVAL_SEC = int(os.environ.get("OPENSKY_INTERVAL_SEC", 20))

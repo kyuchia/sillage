@@ -1,5 +1,5 @@
 """
-MTL Pulse backend.
+Sillage backend.
 
 Serves the same trip JSON that `export/export_trips.py` writes to disk, so the browser
 can change its time window without anyone re-running the export script. Both sides call
@@ -41,7 +41,7 @@ DB_LAYERS = tuple(VALID_LAYERS)                  # bus, aircraft
 SIM_LAYERS = tuple(gtfs_sim.MODES)               # metro, train, rem
 ALL_LAYERS = DB_LAYERS + SIM_LAYERS
 
-PG_DSN = os.environ.get("PG_DSN", "dbname=mtl_pulse")
+PG_DSN = os.environ.get("PG_DSN", "dbname=sillage")
 
 # Point budget for a single /api/trips response. The frontend was benchmarked smooth at
 # ~178k points, so the default is roughly 2x that: generous enough that no realistic
@@ -50,7 +50,7 @@ PG_DSN = os.environ.get("PG_DSN", "dbname=mtl_pulse")
 # writing a huge file to disk is a legitimate thing to want.
 MAX_POINTS = int(os.environ.get("MTL_MAX_POINTS", 400_000))
 
-app = FastAPI(title="MTL Pulse API", version="1.0")
+app = FastAPI(title="Sillage API", version="1.0")
 
 # A one-hour peak window is ~178k points; the JSON compresses roughly 5-10x, which is
 # worth it even over localhost.

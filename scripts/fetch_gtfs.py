@@ -50,7 +50,7 @@ AGENCIES = {
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GTFS_DIR = os.path.join(ROOT, "gtfs")
 
-UA = "mtl-pulse/1.0 (+https://github.com/kyuchia/mtl-pulse)"
+UA = "sillage/1.0 (+https://github.com/kyuchia/sillage)"
 
 
 def calendar_span(zf):

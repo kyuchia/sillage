@@ -6,9 +6,9 @@ record so that no credential lives in a launchd plist, a dotfile, or the repo â€
 LaunchAgent runs inside the user's GUI session, so the login keychain is already
 unlocked and `security` can read it without a password prompt.
 
-    STM_API_KEY            <- service "mtl-pulse-stm"
-    OPENSKY_CLIENT_ID      <- service "mtl-pulse-opensky-id"
-    OPENSKY_CLIENT_SECRET  <- service "mtl-pulse-opensky-secret"
+    STM_API_KEY            <- service "sillage-stm"
+    OPENSKY_CLIENT_ID      <- service "sillage-opensky-id"
+    OPENSKY_CLIENT_SECRET  <- service "sillage-opensky-secret"
 
 The environment still wins when set, so an ad-hoc `export STM_API_KEY=...` run keeps
 working exactly as before.
@@ -20,9 +20,9 @@ import subprocess
 import sys
 
 SERVICES = {
-    "STM_API_KEY": "mtl-pulse-stm",
-    "OPENSKY_CLIENT_ID": "mtl-pulse-opensky-id",
-    "OPENSKY_CLIENT_SECRET": "mtl-pulse-opensky-secret",
+    "STM_API_KEY": "sillage-stm",
+    "OPENSKY_CLIENT_ID": "sillage-opensky-id",
+    "OPENSKY_CLIENT_SECRET": "sillage-opensky-secret",
 }
 
 

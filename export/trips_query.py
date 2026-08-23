@@ -1,5 +1,5 @@
 """
-Shared query + trip-assembly logic for MTL Pulse.
+Shared query + trip-assembly logic for Sillage.
 
 Both `export/export_trips.py` (CLI) and `api/main.py` (HTTP) call into here, so the
 JSON they produce is identical by construction rather than by careful copying.
@@ -215,10 +215,11 @@ def busiest_hour(conn, ttl=BUSIEST_TTL_SEC):
 
     counts = defaultdict(int)
     with conn.cursor() as cur:
-        # Same guard as get_range: this machine's PostgreSQL 17 has a broken install path
-        # and its parallel workers die on `could not open directory ".../timezonesets"`.
-        # A GROUP BY over ~1M rows is precisely the shape that tips the planner parallel.
-        cur.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+        # A GROUP BY over millions of rows is exactly the shape that tips the planner
+        # parallel. That used to crash: PostgreSQL 17 had been uninstalled while its
+        # server kept running on deleted binaries, so share/postgresql@17/timezonesets
+        # was missing and every parallel worker died setting timezone_abbreviations.
+        # Reinstalling 17 restored it; the SET LOCAL guard that sat here is gone.
         for cfg in LAYERS.values():
             cur.execute(f"""
                 SELECT date_trunc('hour', fetched_at) AS bucket, COUNT(*) AS n
@@ -245,21 +246,16 @@ def busiest_hour(conn, ttl=BUSIEST_TTL_SEC):
 def get_range(conn):
     """Report what data actually exists, per layer, plus the shared overlap.
 
-    The overlap matters: the two tables currently intersect for only ~1.7 hours, so a
-    client that defaults its window to the bus range alone will show an empty aircraft
-    layer and look broken.
+    The overlap matters when the two tables do not span the same period: a client that
+    defaults its window to the bus range alone would then show an empty aircraft layer
+    and look broken. Since both fetchers run continuously the overlap is now nearly the
+    whole range, which is why the client also caps a derived window by duration.
     """
     layers = {}
     bounds = []
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        # COUNT(*) over ~1M rows tips the planner into a parallel plan, and this
-        # machine's PostgreSQL 17 has a broken install path — its parallel workers die
-        # with `could not open directory ".../timezonesets"`. Aggregates over one
-        # column are fast enough single-threaded (MIN/MAX use the fetched_at index),
-        # so the guard costs nothing here. SET LOCAL is scoped to this transaction and
-        # is undone by the caller's rollback, so it never leaks to a pooled connection.
-        cur.execute("SET LOCAL max_parallel_workers_per_gather = 0")
-
+        # COUNT(*) over millions of rows goes parallel here, which is correct and fast.
+        # See busiest_hour() for why this used to be forced single-threaded.
         for layer, cfg in LAYERS.items():
             cur.execute(f"""
                 SELECT COUNT(*) AS rows,

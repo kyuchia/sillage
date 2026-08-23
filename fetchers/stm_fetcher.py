@@ -3,11 +3,11 @@ STM realtime bus positions → PostgreSQL.
 
 Requires:
   1. PostgreSQL 17 + PostGIS
-  2. the mtl_pulse database and vehicle_positions table (see db/schema.sql)
+  2. the sillage database and vehicle_positions table (see db/schema.sql)
   3. an STM API key, read from the environment or the macOS Keychain:
-         security add-generic-password -a "$USER" -s mtl-pulse-stm -T /usr/bin/security -w
+         security add-generic-password -a "$USER" -s sillage-stm -T /usr/bin/security -w
      (env STM_API_KEY still wins if set)
-  4. optional: export PG_DSN="dbname=mtl_pulse"   <- already the default
+  4. optional: export PG_DSN="dbname=sillage"   <- already the default
 
 Run:
     python fetchers/stm_fetcher.py
@@ -28,7 +28,7 @@ from health import FetchHealth
 from secrets import describe, get_secret
 
 # ---------- config ----------
-PG_DSN = os.environ.get("PG_DSN", "dbname=mtl_pulse")
+PG_DSN = os.environ.get("PG_DSN", "dbname=sillage")
 VEHICLE_URL = "https://api.stm.info/pub/od/gtfs-rt/ic/v2/vehiclePositions"
 POLL_INTERVAL_SEC = 20
 # --------------------------
@@ -105,7 +105,7 @@ def main():
     api_key, key_src = get_secret(
         "STM_API_KEY", required=True,
         hint="Store it once with:\n"
-             "     security add-generic-password -a \"$USER\" -s mtl-pulse-stm "
+             "     security add-generic-password -a \"$USER\" -s sillage-stm "
              "-T /usr/bin/security -w")
 
     try:

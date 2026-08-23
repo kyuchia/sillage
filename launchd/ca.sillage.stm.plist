@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  MTL Pulse stm fetcher, as a per-user LaunchAgent.
+  Sillage stm fetcher, as a per-user LaunchAgent.
 
   Deliberately contains NO secrets: the fetcher reads its credentials from the login
   Keychain at startup (fetchers/secrets.py). A LaunchAgent runs inside the user's GUI
@@ -17,7 +17,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>ca.mtlpulse.stm</string>
+    <string>ca.sillage.stm</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -34,7 +34,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PG_DSN</key>
-        <string>dbname=mtl_pulse</string>
+        <string>dbname=sillage</string>
         <key>MTL_PLAN_HOURS</key>
         <string>12</string>
         <key>PYTHONUNBUFFERED</key>

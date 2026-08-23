@@ -1,48 +1,47 @@
-# sillage
+# Sillage
 
 **Montréal's transit network, drawn as the trails its vehicles leave behind.**
 
+[![Sillage morning peak](docs/screenshot.png)](https://kyuchia.github.io/sillage/)
+
+<sub>Morning peak, 08:00–09:00, replayed at 60×. Métro lines use STM's official colours, REM its signature lime, exo trains indigo, and aircraft crimson. Buses are deliberately desaturated so the dense surface network reads as texture rather than noise.</sub>
+
 ### → **[Live demo](https://kyuchia.github.io/sillage/)**
 
-*sillage* (French: the wake a boat leaves on water) collects live vehicle positions from STM
-buses and OpenSky aircraft into a PostGIS spatiotemporal database, simulates métro, commuter
-rail and REM from static GTFS schedules, and replays any time window as an animated trail map
-built with deck.gl and MapLibre.
+Named after *sillage*, the French word for the wake a boat leaves on water, Sillage records live positions from STM buses and OpenSky aircraft in a PostGIS spatiotemporal database, simulates métro, commuter rail, and REM movement from static GTFS schedules, and replays them together as animated trails using deck.gl and MapLibre.
 
-The live demo runs on curated frozen scenes — no backend. Run it locally and it queries the
-database directly.
+The published demo uses curated, precomputed scenes and requires no backend. Run the project locally to query arbitrary time windows directly from the database.
 
 ---
 
 ## What it does
 
-Two Python fetchers poll open APIs on a loop and write every position fix into PostgreSQL. A
-FastAPI backend pulls any time window out of the database, merges it with schedule-simulated
-modes on one shared timeline, and hands the browser the JSON that deck.gl's `TripsLayer`
-expects. The page then plays that window back — scrub the timeline, change playback speed,
-adjust how long the trails linger, toggle modes on and off.
+Two Python fetchers poll public APIs and write each position fix to PostgreSQL. A FastAPI backend retrieves a requested time window, combines the recorded positions with schedule-simulated modes on a shared timeline, and returns the paths and timestamps expected by deck.gl's `TripsLayer`.
 
-Because everything is stored rather than streamed, you can replay 8am rush hour as many times
-as you like, or jump to 3am to watch the night network.
+The browser then replays that window interactively: scrub through time, change playback speed, adjust trail persistence, and toggle individual modes.
 
-Five modes render together: **bus** and **aircraft** are recorded; **métro**, **train** and
-**REM** are interpolated from published schedules.
+Because positions are stored rather than only streamed, any collected period can be replayed later. Morning rush hour can be revisited repeatedly, while quieter overnight windows reveal a very different network.
+
+Five modes can render together:
+
+- **Bus** and **aircraft** use recorded positions.
+- **Métro**, **commuter rail**, and **REM** are interpolated from published GTFS schedules.
 
 ---
 
 ## Stack
 
-| Layer | Choice |
-|---|---|
-| Ingestion | Python + `gtfs-realtime-bindings` + `opensky-api` |
-| Storage | PostgreSQL 17 + PostGIS 3.6 |
-| API | FastAPI + uvicorn |
-| Simulation | GTFS static (`shapes.txt` + `stop_times.txt`) interpolation |
-| Map | MapLibre GL JS |
-| Layers | deck.gl (`TripsLayer`, `ScatterplotLayer`) |
-| Basemap | CARTO Dark Matter |
+| Layer      | Choice                                                            |
+| ---------- | ----------------------------------------------------------------- |
+| Ingestion  | Python, `gtfs-realtime-bindings`, `opensky-api`                   |
+| Storage    | PostgreSQL 17, PostGIS 3.6                                        |
+| API        | FastAPI, uvicorn                                                  |
+| Simulation | Static GTFS interpolation using `shapes.txt` and `stop_times.txt` |
+| Map        | MapLibre GL JS                                                    |
+| Layers     | deck.gl `TripsLayer` and `ScatterplotLayer`                       |
+| Basemap    | CARTO Dark Matter                                                 |
 
-MapLibre and CARTO were picked over Mapbox specifically because neither requires a credit card.
+MapLibre and CARTO keep the map stack open and usable without requiring a Mapbox account or credit card.
 
 ---
 
@@ -53,8 +52,7 @@ MapLibre and CARTO were picked over Mapbox specifically because neither requires
 - PostgreSQL 17 with PostGIS (`brew install postgresql@17 postgis`)
 - Python 3.12
 - An STM API key from the [STM developer portal](https://portail.developpeurs.stm.info/apihub)
-- An OpenSky OAuth2 client (free) — anonymous access is capped at 400 requests/day, which is
-  under two hours of polling
+- An OpenSky OAuth2 client. Anonymous OpenSky access is capped at 400 requests per day, which is insufficient for sustained 20-second polling.
 
 ### Install
 
@@ -66,16 +64,16 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-createdb mtl_pulse
-psql mtl_pulse < db/schema.sql
+createdb sillage
+psql sillage < db/schema.sql
 ```
 
 ### Credentials
 
-Secrets live in the macOS Keychain, never in a file or a launchd plist:
+Secrets are stored in the macOS Keychain rather than in files or launchd property lists:
 
 ```bash
-security add-generic-password -a "$USER" -s mtl-pulse-stm -T /usr/bin/security -U -w
+security add-generic-password -a "$USER" -s sillage-stm -T /usr/bin/security -U -w
 ./scripts/store_opensky_credentials.sh ~/Downloads/credentials.json
 ```
 
@@ -83,34 +81,36 @@ security add-generic-password -a "$USER" -s mtl-pulse-stm -T /usr/bin/security -
 
 ```bash
 python fetchers/stm_fetcher.py       # buses, every 20s
-python fetchers/opensky_fetcher.py   # aircraft, every 20s — second terminal
+python fetchers/opensky_fetcher.py   # aircraft, every 20s
 ```
 
-An hour of morning rush hour gives roughly 1,200 vehicles and 180,000 position fixes.
+An hour of morning rush-hour collection typically yields around 1,200 vehicles and 180,000 position fixes.
 
-For unattended overnight runs, use the launchd agents instead — they survive terminal closure
-and hold a sleep assertion tied to the fetcher's own lifetime:
+For unattended collection, launchd agents can run the fetchers independently of a terminal session and keep the machine awake for the lifetime of each process:
 
 ```bash
-sudo pmset -c sleep 0 disksleep 0            # AC only; on battery it still sleeps
-cp launchd/ca.mtlpulse.*.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ca.mtlpulse.stm.plist
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ca.mtlpulse.opensky.plist
+sudo pmset -c sleep 0 disksleep 0    # AC only; battery behaviour is unchanged
+cp launchd/ca.sillage.*.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ca.sillage.stm.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ca.sillage.opensky.plist
 ```
 
-> **Do not use `caffeinate -i &`.** A standalone `caffeinate` belongs to the shell that
-> launched it and dies with the terminal, leaving nothing asserting sleep prevention. That
-> cost a full night of collection. The correct form is `caffeinate -i <command>`, which is
-> how the launchd agents invoke the fetchers.
+> Use `caffeinate -i <command>`, not a standalone `caffeinate -i &`. The launchd agents tie the sleep assertion to the fetcher process so unattended collection survives terminal closure.
 
-The fetchers report their own health: sleep/wake detection, stale-write and low-yield
-warnings, per-run logs under `fetchers/logs/`, and an exit summary that refuses to call a
-degraded run healthy.
+The fetchers include basic health monitoring for sleep and wake events, stale writes, unusually low collection yield, per-run logging under `fetchers/logs/`, and degraded-run detection in the exit summary.
 
-### Static GTFS (for the simulated modes)
+### Static GTFS
+
+Fetch and archive the feeds used by the simulated modes:
 
 ```bash
-python scripts/fetch_gtfs.py     # archives STM / exo / REM feeds under gtfs/<agency>/<date>/
+python scripts/fetch_gtfs.py
+```
+
+Feeds are stored under:
+
+```text
+gtfs/<agency>/<date>/
 ```
 
 ### Visualize
@@ -119,100 +119,114 @@ python scripts/fetch_gtfs.py     # archives STM / exo / REM feeds under gtfs/<ag
 uvicorn api.main:app --reload --port 8000
 ```
 
-Open **http://localhost:8000/docs/** — the API serves the page itself.
+Open **[http://localhost:8000/](http://localhost:8000/)**. FastAPI serves the visualization directly.
 
-Any URL parameter is forwarded straight to the API:
+URL parameters are forwarded to the API:
 
+```text
+/?layer=all&start=2026-08-20%2008:00-04:00&end=2026-08-20%2009:00-04:00
 ```
-/docs/?layer=all&start=2026-08-20%2008:00-04:00&end=2026-08-20%2009:00-04:00
-```
 
-`layer` accepts `bus`, `aircraft`, `metro`, `train`, `rem`, the aliases `both` and `all`, or a
-comma-separated list such as `metro,rem`.
+`layer` accepts `bus`, `aircraft`, `metro`, `train`, `rem`, the aliases `both` and `all`, or a comma-separated list such as `metro,rem`.
 
 ---
 
 ## The published demo
 
-GitHub Pages serves `docs/` statically, so the live site has no database behind it. A handful
-of hand-picked windows are frozen into `docs/scenes/` and chosen from a dropdown:
+GitHub Pages serves `docs/` statically, so the published site cannot query the PostgreSQL database or FastAPI backend directly. Instead, selected time windows are exported into `docs/scenes/` and made available through a scene picker.
+
+To rebuild them:
 
 ```bash
-uvicorn api.main:app --port 8000 &    # scenes are baked from the local API
+uvicorn api.main:app --port 8000 &
 ./scripts/bake_scenes.sh
 ```
 
-Locally the app still prefers the live API; baked scenes are a fallback, and any fallback says
-so in the panel rather than quietly showing different data.
+When running locally, the visualization prefers the live API. Baked scenes act as a fallback, and the interface indicates when fallback data is being shown.
 
 ---
 
 ## Data model
 
-Two tables, both with a `GENERATED` PostGIS geography column derived from lat/lon, plus a GiST
-index for spatial queries and a B-tree on `fetched_at` for time-range scans. See
-`db/schema.sql`.
+Recorded positions are stored in two tables. Each includes a `GENERATED` PostGIS geography column derived from latitude and longitude, a GiST index for spatial queries, and a B-tree index on `fetched_at` for time-range scans.
 
-A sample spatial query — buses near Place-des-Arts in the last hour, by route:
+See [`db/schema.sql`](db/schema.sql) for the full schema.
+
+For example, buses within 500 metres of Place-des-Arts during the last hour can be grouped by route with:
 
 ```sql
 SELECT route_id, COUNT(DISTINCT vehicle_id)
 FROM vehicle_positions
 WHERE fetched_at > NOW() - INTERVAL '1 hour'
-  AND ST_DWithin(geom, ST_MakePoint(-73.5772, 45.5048)::geography, 500)
-GROUP BY route_id ORDER BY 2 DESC;
+  AND ST_DWithin(
+        geom,
+        ST_MakePoint(-73.5772, 45.5048)::geography,
+        500
+      )
+GROUP BY route_id
+ORDER BY 2 DESC;
 ```
 
 ---
 
-## Notes on the rendering
+## Rendering
 
-`TripsLayer` wants each vehicle as one record with parallel `path` and `timestamps` arrays.
-Timestamps are seconds relative to the window's start rather than Unix epoch values — epoch
-milliseconds are large enough that float64 precision starts to bite when deck.gl interpolates.
+`TripsLayer` represents each vehicle as one record containing parallel `path` and `timestamps` arrays. Sillage uses timestamps in seconds relative to the beginning of the requested window rather than Unix epoch values, avoiding unnecessary precision loss during deck.gl interpolation.
 
-`TripsLayer` draws the trail but not the vehicle itself, so the page also computes each
-vehicle's current position by binary-searching its timestamp array and interpolating between
-the two bracketing fixes. Those become a `ScatterplotLayer` of moving heads.
+`TripsLayer` renders the trail but not a moving vehicle head. To show current positions, the client binary-searches each vehicle's timestamp array, finds the two fixes surrounding the current playback time, and interpolates between their coordinates. The resulting positions are rendered separately with `ScatterplotLayer`.
 
-**Colour is assigned by mode, and brightness by speed** — never by route number, which turned
-200+ routes into rainbow soup. Where an agency publishes a brand colour it is used verbatim:
-the métro's four STM line colours and REM's `#73A400`. Bus, the densest layer, is deliberately
-achromatic so it reads as texture rather than competing with the lines. Every pairing is gated
-by `scripts/check_colours.js`, which compares full colour ramps by CIEDE2000 and fails below a
-minimum perceptual distance.
+### Colour
+
+**Hue identifies mode; brightness encodes speed.**
+
+Routes are deliberately not assigned individual colours. With more than 200 bus routes, route-level hashing quickly becomes rainbow soup and obscures the larger structure of the network.
+
+Where an operator publishes an official colour, Sillage uses it directly. This includes STM's four métro line colours and REM's `#73A400`. The much denser bus layer remains largely achromatic so it reads as a moving texture without competing visually with the rail network.
+
+Colour ramps are checked by `scripts/check_colours.js`, which compares them using CIEDE2000 and fails when the minimum perceptual distance falls below the configured threshold.
+
+---
+
+## Schedule simulation
+
+Simulating transit from static GTFS involves a few details that are easy to miss.
+
+STM does not publish `shape_dist_traveled`, so stops must be projected onto route geometry. A simple nearest-point search can place a later stop earlier along a shape where the route passes near itself, so projections are constrained to move forward.
+
+GTFS times can also extend past midnight. A departure at `25:30:00`, for example, belongs to the previous service day even though it occurs on the next calendar day.
+
+Finally, static GTFS feeds cover limited service periods. Historical recordings are therefore matched to a compatible service date when the original date falls outside the available feed.
 
 ---
 
 ## Data sources
 
-| Mode | Source | Status |
-|---|---|---|
-| STM bus | GTFS-RT | Live |
-| Aircraft | OpenSky (OAuth2) | Live |
-| STM métro | Static GTFS interpolation | Simulated — no realtime GPS exists |
-| REM | Static GTFS interpolation | Simulated — realtime feed is alerts-only |
-| exo commuter rail | Static GTFS interpolation | Simulated — realtime needs an application |
-| RTL / STL | GTFS-RT (application required) | Not implemented |
+| Mode              | Source                              | Rendering          |
+| ----------------- | ----------------------------------- | ------------------ |
+| STM bus           | GTFS-Realtime                       | Recorded           |
+| Aircraft          | OpenSky OAuth2 API                  | Recorded           |
+| STM métro         | Static GTFS                         | Schedule-simulated |
+| REM               | Static GTFS                         | Schedule-simulated |
+| exo commuter rail | Static GTFS                         | Schedule-simulated |
+| RTL / STL         | GTFS-Realtime, application required | Not implemented    |
 
-STM does not publish realtime métro positions — trains are underground and the signalling
-system is closed. REM's published GTFS-Realtime feed contains service alerts only, with no
-vehicle positions at all. Both are therefore simulated from the static schedule, interpolating
-where each train should be at a given moment.
+STM does not publish realtime métro vehicle positions. REM's public GTFS-Realtime feed provides service alerts but not vehicle positions. These modes are therefore simulated from static schedules by interpolating each vehicle's expected position along its published trip geometry.
+
+exo commuter rail currently uses the same schedule-based approach; realtime access requires a separate application.
 
 ---
 
 ## Roadmap
 
-- [x] Colour scheme reworked — by mode and speed, not per-route hashing
+- [x] Colour encoding by mode and speed
 - [x] Aircraft layer
-- [x] FastAPI backend so the page can query time windows directly
-- [x] Métro, REM and commuter rail via static GTFS interpolation
-- [x] Unattended overnight collection with health monitoring
-- [x] Published demo on GitHub Pages
+- [x] FastAPI time-window API
+- [x] Métro, REM, and commuter rail simulation from static GTFS
+- [x] Unattended collection with health monitoring
+- [x] Static GitHub Pages demo
 - [ ] 3D extrusion and hover tooltips
-- [ ] exo commuter rail realtime (application submitted)
-- [ ] Live mode (WebSocket) alongside replay
+- [ ] exo commuter rail realtime integration
+- [ ] WebSocket live mode alongside replay
 
 ---
 
@@ -220,6 +234,4 @@ where each train should be at a given moment.
 
 MIT
 
-Transit data © STM and © exo/ARTM, used under their open data terms. REM GTFS © CDPQ Infra
-(CC-BY-4.0). Aircraft data © [The OpenSky Network](https://opensky-network.org). Basemap
-© CARTO, © OpenStreetMap contributors.
+Transit data © STM and © exo/ARTM, used under their respective open-data terms. REM GTFS © CDPQ Infra under CC BY 4.0. Aircraft data © [The OpenSky Network](https://opensky-network.org). Basemap © CARTO and © OpenStreetMap contributors.

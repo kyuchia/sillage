@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from trips_query import NoDataError, VALID_LAYERS, build_trips_with_summary
 
-PG_DSN = os.environ.get("PG_DSN", "dbname=mtl_pulse")
+PG_DSN = os.environ.get("PG_DSN", "dbname=sillage")
 
 
 def main():

@@ -1,7 +1,7 @@
 -- ============================================================
--- MTL Pulse Schema (PostgreSQL + PostGIS)
+-- Sillage Schema (PostgreSQL + PostGIS)
 -- ============================================================
--- 用法:  psql mtl_pulse < schema.sql
+-- 用法:  psql sillage < schema.sql
 --
 -- 設計重點:
 --   - vehicle_positions: STM 公車即時位置
