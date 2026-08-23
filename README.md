@@ -4,13 +4,11 @@
 
 [![Sillage morning peak](docs/screenshot.png)](https://kyuchia.github.io/sillage/)
 
-<sub>Morning peak, 08:00–09:00, replayed at 60×. Métro lines use STM's official colours, REM its signature lime, exo trains indigo, and aircraft crimson. Buses are deliberately desaturated so the dense surface network reads as texture rather than noise.</sub>
-
-### → **[Live demo](https://kyuchia.github.io/sillage/)**
+<sub>Greater Montréal during the morning peak, 08:00–09:00, with buses, métro, REM, commuter trains, and aircraft replayed as animated trails. Colour identifies the mode; brighter trails indicate higher speeds.</sub>
 
 Named after *sillage*, the French word for the wake a boat leaves on water, Sillage records live positions from STM buses and OpenSky aircraft in a PostGIS spatiotemporal database, simulates métro, commuter rail, and REM movement from static GTFS schedules, and replays them together as animated trails using deck.gl and MapLibre.
 
-The published demo uses curated, precomputed scenes and requires no backend. Run the project locally to query arbitrary time windows directly from the database.
+The [published demo](https://kyuchia.github.io/sillage/) uses curated, precomputed scenes and requires no backend. Run the project locally to query arbitrary time windows directly from the database.
 
 ---
 
@@ -20,12 +18,7 @@ Two Python fetchers poll public APIs and write each position fix to PostgreSQL. 
 
 The browser then replays that window interactively: scrub through time, change playback speed, adjust trail persistence, and toggle individual modes.
 
-Because positions are stored rather than only streamed, any collected period can be replayed later. Morning rush hour can be revisited repeatedly, while quieter overnight windows reveal a very different network.
-
-Five modes can render together:
-
-- **Bus** and **aircraft** use recorded positions.
-- **Métro**, **commuter rail**, and **REM** are interpolated from published GTFS schedules.
+Because positions are stored rather than only streamed, any collected period can be replayed later.
 
 ---
 
@@ -40,8 +33,6 @@ Five modes can render together:
 | Map        | MapLibre GL JS                                                    |
 | Layers     | deck.gl `TripsLayer` and `ScatterplotLayer`                       |
 | Basemap    | CARTO Dark Matter                                                 |
-
-MapLibre and CARTO keep the map stack open and usable without requiring a Mapbox account or credit card.
 
 ---
 
@@ -95,22 +86,12 @@ launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ca.sillage.stm.plist
 launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ca.sillage.opensky.plist
 ```
 
-> Use `caffeinate -i <command>`, not a standalone `caffeinate -i &`. The launchd agents tie the sleep assertion to the fetcher process so unattended collection survives terminal closure.
-
-The fetchers include basic health monitoring for sleep and wake events, stale writes, unusually low collection yield, per-run logging under `fetchers/logs/`, and degraded-run detection in the exit summary.
-
 ### Static GTFS
 
 Fetch and archive the feeds used by the simulated modes:
 
 ```bash
 python scripts/fetch_gtfs.py
-```
-
-Feeds are stored under:
-
-```text
-gtfs/<agency>/<date>/
 ```
 
 ### Visualize
@@ -177,19 +158,13 @@ ORDER BY 2 DESC;
 
 ### Colour
 
-**Hue identifies mode; brightness encodes speed.**
+**Hue identifies mode; brightness encodes speed.** Per-route colouring quickly becomes rainbow soup across more than 200 bus routes, so colour is assigned by mode instead. Official colours are preserved where available, including STM's four métro lines and REM's `#73A400`.
 
-Routes are deliberately not assigned individual colours. With more than 200 bus routes, route-level hashing quickly becomes rainbow soup and obscures the larger structure of the network.
-
-Where an operator publishes an official colour, Sillage uses it directly. This includes STM's four métro line colours and REM's `#73A400`. The much denser bus layer remains largely achromatic so it reads as a moving texture without competing visually with the rail network.
-
-Colour ramps are checked by `scripts/check_colours.js`, which compares them using CIEDE2000 and fails when the minimum perceptual distance falls below the configured threshold.
+`scripts/check_colours.js` validates the resulting ramps with CIEDE2000 and fails the build when colours become too perceptually similar.
 
 ---
 
 ## Schedule simulation
-
-Simulating transit from static GTFS involves a few details that are easy to miss.
 
 STM does not publish `shape_dist_traveled`, so stops must be projected onto route geometry. A simple nearest-point search can place a later stop earlier along a shape where the route passes near itself, so projections are constrained to move forward.
 
@@ -201,37 +176,29 @@ Finally, static GTFS feeds cover limited service periods. Historical recordings 
 
 ## Data sources
 
-| Mode              | Source                              | Rendering          |
-| ----------------- | ----------------------------------- | ------------------ |
-| STM bus           | GTFS-Realtime                       | Recorded           |
-| Aircraft          | OpenSky OAuth2 API                  | Recorded           |
-| STM métro         | Static GTFS                         | Schedule-simulated |
-| REM               | Static GTFS                         | Schedule-simulated |
-| exo commuter rail | Static GTFS                         | Schedule-simulated |
-| RTL / STL         | GTFS-Realtime, application required | Not implemented    |
+| Mode              | Source                                                                         | Rendering          | Terms      |
+| ----------------- | ------------------------------------------------------------------------------ | ------------------ | ---------- |
+| STM bus           | [STM](https://www.stm.info/en/about/developers/terms-use) GTFS-Realtime         | Recorded           | CC BY 4.0  |
+| Aircraft          | [The OpenSky Network](https://opensky-network.org/) OAuth2 API                  | Recorded           | See terms  |
+| STM métro         | [STM](https://www.stm.info/en/about/developers/terms-use) static GTFS           | Schedule-simulated | CC BY 4.0  |
+| REM               | [CDPQ Infra](https://rem.info/) static GTFS                                     | Schedule-simulated | CC BY 4.0  |
+| exo commuter rail | [exo / ARTM](https://exo.quebec/en/about/open-data) static GTFS                 | Schedule-simulated | CC BY      |
+| RTL / STL         | GTFS-Realtime, application required                                             | Not implemented    | —          |
 
-STM does not publish realtime métro vehicle positions. REM's public GTFS-Realtime feed provides service alerts but not vehicle positions. These modes are therefore simulated from static schedules by interpolating each vehicle's expected position along its published trip geometry.
+Basemap © [CARTO](https://carto.com/attribution/), © OpenStreetMap contributors.
 
-exo commuter rail currently uses the same schedule-based approach; realtime access requires a separate application.
+STM métro and REM do not provide realtime vehicle positions, while exo realtime access requires a separate application. These modes therefore use static GTFS schedules.
 
 ---
 
-## Roadmap
+## References
 
-- [x] Colour encoding by mode and speed
-- [x] Aircraft layer
-- [x] FastAPI time-window API
-- [x] Métro, REM, and commuter rail simulation from static GTFS
-- [x] Unattended collection with health monitoring
-- [x] Static GitHub Pages demo
-- [ ] 3D extrusion and hover tooltips
-- [ ] exo commuter rail realtime integration
-- [ ] WebSocket live mode alongside replay
+> Schäfer, Matthias, Martin Strohmeier, Vincent Lenders, Ivan Martinovic, and Matthias Wilhelm. 2014. "Bringing Up OpenSky: A Large-scale ADS-B Sensor Network for Research." In *Proceedings of the 13th IEEE/ACM International Symposium on Information Processing in Sensor Networks (IPSN)*.
 
 ---
 
 ## License
 
-MIT
+The source code for Sillage is released under the [MIT License](LICENSE).
 
-Transit data © STM and © exo/ARTM, used under their respective open-data terms. REM GTFS © CDPQ Infra under CC BY 4.0. Aircraft data © [The OpenSky Network](https://opensky-network.org). Basemap © CARTO and © OpenStreetMap contributors.
+The baked scenes in `docs/scenes/` contain derived transit and aircraft data and are not covered by the MIT License. They remain subject to the terms of their respective providers listed under [Data sources](#data-sources).
