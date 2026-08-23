@@ -10,3 +10,4 @@ archive/
 .env
 gtfs/
 fetchers/logs/
+CLAUDE.md
