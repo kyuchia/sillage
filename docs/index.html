@@ -10,146 +10,136 @@
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
 
 <style>
+  /* Inter, self-hosted from docs/fonts/ (SIL OFL, licence alongside the files).
+     Weights 400/500 only, latin + latin-ext subsets; no CDN. */
+  @font-face {
+    font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap;
+    src: url("fonts/inter-latin-400-normal.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+      U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212,
+      U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: "Inter"; font-style: normal; font-weight: 500; font-display: swap;
+    src: url("fonts/inter-latin-500-normal.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+      U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212,
+      U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap;
+    src: url("fonts/inter-latin-ext-400-normal.woff2") format("woff2");
+    unicode-range: U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+      U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  @font-face {
+    font-family: "Inter"; font-style: normal; font-weight: 500; font-display: swap;
+    src: url("fonts/inter-latin-ext-500-normal.woff2") format("woff2");
+    unicode-range: U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+      U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  /* Neutral chrome palette. Every other colour on the page comes from MODES/buildRamp
+     in the script below — the status line's warning/error tones included. */
   :root {
-    --accent-a: #59b2c6;   /* cold cyan */
-    --accent-b: #7f93e2;   /* blue-violet */
+    --bg:        #08090c;
     --ink:       #e8ecf2;
     --ink-dim:   #8b93a1;
     --ink-faint: #5c6373;
+    --line:      rgba(255,255,255,0.09);
+    --wash:      rgba(14,16,21,0.72);
+    /* The About box is the one paper surface on the page; its ink is the Tales
+       pair, not the page's light ink above. */
+    --paper:     #FAF9F7;
+    --paper-ink: #26241F;
   }
 
-  html, body { margin: 0; padding: 0; height: 100%; background: #08090c; color: var(--ink);
-               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-feature-settings: "tnum" 1; overflow: hidden; }
+  /* Form controls do not inherit the page font on their own */
+  button, input { font: inherit; font-feature-settings: inherit; }
   #map { position: absolute; inset: 0; }
 
-  #panel {
-    position: absolute; top: 14px; left: 14px; z-index: 10;
-    min-width: 286px; padding: 16px 18px 14px;
-    background: linear-gradient(158deg,
-                rgba(30, 34, 43, 0.52) 0%,
-                rgba(14, 16, 21, 0.38) 100%);
-    backdrop-filter: blur(20px) saturate(150%);
-    -webkit-backdrop-filter: blur(20px) saturate(150%);
-    border: 1px solid rgba(255, 255, 255, 0.09);
-    border-radius: 12px;
-    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45),
-                inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  }
+  /* ---------- bottom strip: status line over the transport controls ---------- */
+  /* right = the lockup card's footprint (287 + 22) plus a 16px gap, for widths where max-width stops binding */
+  #dial { position: absolute; left: 18px; bottom: 20px; right: 325px;
+    z-index: 30; display: flex; flex-direction: column; align-items: stretch;
+    background: var(--wash); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line); padding: 9px 16px; max-width: 640px;
+    opacity: 1; transition: opacity .35s ease; }
+  #dial.faded { opacity: 0; pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { #dial { transition: none; } }
 
-  #panelHead { display: flex; align-items: center; gap: 8px; }
-  #panel h1 {
-    margin: 0 0 3px; font-size: 13px; font-weight: 600; letter-spacing: 0.14em;
-    color: var(--ink);
-  }
-  #panelBtns { margin-left: auto; display: flex; gap: 2px; }
-  .iconbtn {
-    background: none; border: none; padding: 2px 4px; border-radius: 4px;
-    color: var(--ink-faint); cursor: pointer; line-height: 0;
-  }
-  .iconbtn:hover { background: rgba(255,255,255,0.08); color: var(--ink); }
-  .iconbtn svg { width: 14px; height: 14px; display: block; }
+  /* Row 1. Which scene/window was actually served — a mismatch between the URL and the
+     rendered data must be visible at a glance. In a fallback (.warn) or failure (.error)
+     state the whole line takes that tone and the strip stops auto-hiding: a fading
+     fallback warning would be a silent fallback. */
+  #banner { font-size: 12.5px; color: var(--ink-dim); letter-spacing: .02em; line-height: 1.45;
+    padding-bottom: 7px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+  #banner.warn  { color: var(--warn); }
+  #banner.error { color: var(--error); }
+  #banner b { font-weight: 500; color: inherit; }
+  #banner code { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; }
 
-  /* Collapsed: title row + clock only */
-  #panel.collapsed { min-width: 0; padding-bottom: 12px; }
-  #panel.collapsed .sub,
-  #panel.collapsed #panelBody { display: none; }
-  #panel.collapsed #clock { margin-bottom: 0; font-size: 16px; }
-  #panel.collapsed #chevron { transform: rotate(180deg); }
+  /* Row 2 */
+  #dialRow { display: flex; align-items: center; gap: 14px; }
+  #clock { font-size: 15px; font-variant-numeric: tabular-nums; letter-spacing: .05em;
+    color: var(--ink); min-width: 120px; }
+  #clock small { color: var(--ink-faint); font-size: 11px; margin-left: 6px; letter-spacing: .08em; }
+  #playBtn { background: none; border: 1px solid var(--line); color: var(--ink);
+    width: 26px; height: 26px; padding: 0; cursor: pointer; font-size: 11px; line-height: 1; }
+  #playBtn:hover { border-color: var(--ink-dim); }
+  #timeSlider { flex: 1; accent-color: var(--ink-dim); height: 2px; cursor: pointer; margin: 0; }
+  #speeds { display: flex; gap: 2px; }
+  #speeds button { background: none; border: none; color: var(--ink-faint); font-size: 13px;
+    padding: 3px 7px; cursor: pointer; letter-spacing: .03em; }
+  #speeds button:hover { color: var(--ink-dim); }
+  #speeds button.active { color: var(--ink); border-bottom: 1px solid var(--ink-dim); }
 
-  /* Fully hidden: panel disappears, one button left in the top-left corner */
-  #panel.gone { display: none; }
-  #showBtn {
-    position: absolute; top: 14px; left: 14px; z-index: 10; display: none;
-    width: 40px; height: 40px; padding: 0; align-items: center; justify-content: center;
-    background: rgba(20, 23, 30, 0.55);
-    backdrop-filter: blur(20px) saturate(150%);
-    -webkit-backdrop-filter: blur(20px) saturate(150%);
-    border: 1px solid rgba(255,255,255,0.09); border-radius: 11px;
-    color: var(--ink-dim); cursor: pointer;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
-  }
-  #showBtn.visible { display: flex; }
-  #showBtn:hover { color: var(--ink); }
-  #showBtn svg { width: 22px; height: 22px; }
+  /* ---------- lockup: never auto-hides ---------- */
+  /* A card in the same material as the strip, so the two bottom elements share one surface */
+  #lockup { position: absolute; right: 22px; bottom: 20px; text-align: left; z-index: 30;
+    line-height: 1.5; padding: 14px 18px;
+    background: var(--wash); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line);
+    /* The page's off-white glares at display size; the card rests a step toward dim.
+       Scoped here — the strip, sidebar and About keep --ink as is. */
+    color: color-mix(in srgb, var(--ink) 78%, var(--ink-dim)); }
+  /* A display mark, not a heading: it no longer tracks the About heading's size.
+     Weight 400 — at this size the tracking carries the presence (400 is also the lightest
+     weight self-hosted; nothing lighter is faked). One colour for all three lines.
+     Left-aligned, so the tracking's trailing gap needs no compensation. */
+  #lockup .title { font-size: 30px; line-height: 1.2; letter-spacing: .22em; color: inherit;
+    font-weight: 400; }
+  #lockup .sub { font-size: 14px; font-weight: 400; letter-spacing: .12em; color: inherit;
+    white-space: nowrap; margin-top: 4px; }
+  #lockup .links { font-size: 14px; letter-spacing: .08em; margin-top: 4px; }
+  #lockup .links button { background: none; border: none; padding: 0; margin-right: 10px;
+    color: inherit; cursor: pointer; }
+  #lockup .links button:last-child { margin-right: 0; }
+  #lockup .links button:hover, #lockup .links button:focus-visible { color: var(--ink-dim); }
 
-  #panel .sub { font-size: 11px; color: var(--ink-faint); margin-bottom: 14px; letter-spacing: 0.02em; }
+  /* ---------- sidebar ---------- */
+  #side { position: absolute; top: 0; left: 0; bottom: 0; width: 270px; box-sizing: border-box;
+    z-index: 35; background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    border-right: 1px solid var(--line); padding: 52px 20px 20px;
+    transform: translateX(-100%); transition: transform .22s ease; overflow-y: auto; }
+  #side[data-open="true"] { transform: none; }
+  @media (prefers-reduced-motion: reduce) { #side { transition: none; } }
+  #side h2 { font-size: 12px; font-weight: 500; letter-spacing: .18em; color: var(--ink-faint);
+    margin: 22px 0 10px; }
+  #legend h2 { margin-top: 0; }
+  #sideClose { position: absolute; top: 14px; right: 14px; width: 26px; height: 26px; padding: 0;
+    background: none; border: none; color: var(--ink-faint); font-size: 14px; cursor: pointer; }
+  #sideClose:hover { color: var(--ink); }
 
-  #clock {
-    font-size: 19px; font-family: "SF Mono", Menlo, monospace;
-    margin: 6px 0 5px;
-    background: linear-gradient(96deg, var(--accent-a), var(--accent-b));
-    -webkit-background-clip: text; background-clip: text;
-    -webkit-text-fill-color: transparent; color: transparent;
-  }
-  #stats, #live { font-size: 11px; color: var(--ink-dim); }
-  /* Which window and which modes were actually served. Without this, a mismatch
-     between the URL and the rendered data is invisible. */
-  #source {
-    font-size: 10px; color: var(--ink-faint); line-height: 1.5;
-    font-variant-numeric: tabular-nums; margin-bottom: 2px;
-  }
-  #source b { color: var(--ink-dim); font-weight: 500; }
-  #source.live b { color: #8fd0c4; }
-  /* Any fallback or non-200 has to be impossible to miss: a silent fallback is what
-     made a dead backend look like a working page. */
-  #banner {
-    display: none; margin: 8px 0 2px; padding: 7px 9px; border-radius: 6px;
-    font-size: 11px; line-height: 1.45;
-    background: rgba(214, 138, 46, 0.14);
-    border: 1px solid rgba(226, 158, 74, 0.45);
-    color: #f0c48a;
-  }
-  #banner.show { display: block; }
-  #banner.err { background: rgba(214, 60, 60, 0.15);
-                border-color: rgba(233, 92, 92, 0.5); color: #f2a2a2; }
-  #banner code { font-family: "SF Mono", Menlo, monospace; font-size: 10px; }
-  #live { margin-bottom: 12px; }
-  #stats span, #live span { color: var(--ink); font-weight: 500; }
-
-  .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; font-size: 12px; }
-  .row label { color: var(--ink-faint); min-width: 54px; }
-
-  input[type="range"] {
-    flex: 1; height: 3px; -webkit-appearance: none; appearance: none;
-    background: linear-gradient(90deg, rgba(89,178,198,0.55), rgba(127,147,226,0.55));
-    border-radius: 2px; outline: none;
-  }
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
-    background: #eef3f9; border: none; cursor: pointer;
-    box-shadow: 0 0 0 3px rgba(120, 180, 220, 0.16);
-  }
-  input[type="range"]::-moz-range-thumb {
-    width: 12px; height: 12px; border-radius: 50%; border: none;
-    background: #eef3f9; cursor: pointer;
-  }
-  input[type="range"]:focus-visible { box-shadow: 0 0 0 2px rgba(147,168,240,0.65); }
-
-  button {
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--ink-dim);
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
-    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
-  }
-  button:hover { background: rgba(255, 255, 255, 0.10); color: var(--ink); }
-  button:focus-visible { outline: 2px solid rgba(147,168,240,0.7); outline-offset: 1px; }
-  button.active {
-    background: linear-gradient(135deg, rgba(89,178,198,0.28), rgba(127,147,226,0.28));
-    border-color: rgba(130, 180, 225, 0.48);
-    color: #dff0f8;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
-  }
-
-  /* ---- legend ---- */
-  #legend {
-    display: none;
-    margin: 13px 0 2px; padding-top: 11px;
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
-  }
+  /* ---- layer switches (unchanged from the retired panel) ---- */
+  #legend { display: none; }
   .mode {
     display: flex; align-items: center; gap: 9px;
-    font-size: 12px; color: #c4ccd8; margin: 3px 0; padding: 4px 4px;
+    font-size: 14px; color: #c4ccd8; margin: 3px 0; padding: 4px 4px;
     border-radius: 5px; user-select: none;
     transition: background 100ms ease, color 120ms ease;
   }
@@ -164,7 +154,7 @@
     border-radius: 50%; background: #ffffff;
     transition: left 130ms ease, background 130ms ease;
   }
-  .mode .tag { margin-left: auto; font-size: 10px; color: #4c525f; letter-spacing: 0.04em;
+  .mode .tag { margin-left: auto; font-size: 11px; color: #4c525f; letter-spacing: 0.04em;
                font-variant-numeric: tabular-nums; }
   /* Off: track fades to grey, knob slides back left but stays white */
   .mode.hidden { color: var(--ink-faint); }
@@ -176,116 +166,266 @@
   .mode.off .sw { background-image: none !important;
                   background-color: rgba(255,255,255,0.10) !important; }
   .mode.off .kn { left: 2px; background: #3a3f4a; }
-  #legendHint { font-size: 10px; color: #4c525f; margin: 0 0 6px 1px; letter-spacing: 0.03em; }
-  #ramp { height: 6px; border-radius: 3px; margin: 10px 0 4px; }
-  #rampLabels { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-faint); }
+  @media (prefers-reduced-motion: reduce) { .mode, .mode .sw, .mode .kn { transition: none; } }
 
-  @media (prefers-reduced-motion: reduce) { button, .mode { transition: none; } }
+  #ramp { height: 6px; border-radius: 3px; margin: 12px 0 4px; }
+  #rampLabels { display: flex; justify-content: space-between; font-size: 11px;
+    color: var(--ink-faint); margin-top: 4px; }
+
+  /* ---- rendering ---- */
+  .ctlRow { display: flex; align-items: center; gap: 10px; font-size: 13px;
+    color: var(--ink-dim); padding: 4px 0; }
+  .ctlRow label { min-width: 34px; }
+  .ctlRow input[type=range] { flex: 1; accent-color: var(--ink-dim); height: 2px; margin: 0; }
+  .ctlRow .val { font-size: 12px; color: var(--ink-faint); min-width: 34px; text-align: right;
+    font-variant-numeric: tabular-nums; }
+  .toggleRow { display: flex; align-items: center; justify-content: space-between; width: 100%;
+    background: none; border: none; padding: 4px 0; text-align: left;
+    font-size: 13px; color: var(--ink-dim); cursor: pointer; }
+  .toggleRow:hover { color: var(--ink); }
+  .toggleRow .state { font-size: 11.5px; color: var(--ink-faint); letter-spacing: .06em; }
+
+  /* ---- scenes ---- */
+  .sceneRow { display: block; width: 100%; background: none; border: none; text-align: left;
+    font-size: 14px; color: var(--ink-dim); padding: 5px 0; cursor: pointer; }
+  .sceneRow:hover { color: var(--ink); }
+  .sceneRow.active { color: var(--ink); }
+  .sceneRow small { display: block; font-size: 11.5px; color: var(--ink-faint); margin-top: 1px; }
+
+  /* ---- audio ---- */
+  #audioRow { display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--ink-faint); }
+  #audioRow svg { width: 15px; height: 15px; }
+
+  /* ---------- about ---------- */
+  /* The scrim damps the map without hiding it: the trails stay dimly visible around
+     the paper box. Nothing in it is blurred — the trails read better undiffused. */
+  #about { position: absolute; inset: 0; z-index: 50; display: none;
+    background: color-mix(in srgb, var(--bg) 55%, transparent); }
+  body[data-about="open"] #about { display: flex; align-items: center; justify-content: center; }
+  /* A paper box over the dark map — the Tales About treatment inverted. Translucent
+     paper over a blurred backdrop with a grain tile on top; the scrim stays dark. */
+  /* 520px, from a 500–580 sweep of every paragraph's last-line length in Chrome: paragraphs
+     2–4 end at 43/86/63% of the text width; paragraph 1's short "leave behind." is the
+     tagline's own cadence and is accepted. The copy is fixed; only the width was free. */
+  #aboutBox { max-width: 520px; box-sizing: border-box; padding: 44px 48px; position: relative; outline: none;
+    background: color-mix(in srgb, var(--paper) 95%, transparent);
+    backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+    border: 1px solid color-mix(in srgb, var(--paper-ink) 22%, transparent);
+    color: var(--paper-ink); }
+  /* Grain, ported from Tales with its baseFrequency untouched. Tales screens white
+     noise onto ink; on paper that reads as nothing, so the noise is black and
+     multiplied instead — the same tile, inverted with the surface. */
+  #aboutBox::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    opacity: .11; mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  /* Content sits above the grain layer; the cross is positioned already and gets its own z */
+  #aboutBox > *:not(#aboutClose) { position: relative; z-index: 1; }
+  /* A document heading at 16px — decoupled from the lockup's display-size wordmark.
+     Left-aligned, so the trailing tracking gap needs no compensation here. */
+  #aboutBox h3 { margin: 0 0 14px; font-size: 16px; letter-spacing: .22em; font-weight: 500;
+    color: var(--paper-ink); }
+  /* No text-wrap: pretty here. In Chrome 152 it crashes the renderer the moment this box
+     paints — only in combination with the box's backdrop-filter AND the multiplied grain
+     layer; drop either and it survives (reproduced 5/5 vs 3/3 over DevTools). The 544px
+     width above is what keeps the paragraph endings clean. */
+  #aboutBox p { font-size: 14px; line-height: 1.7; margin: 0 0 12px;
+    color: color-mix(in srgb, var(--paper-ink) 80%, var(--paper)); }
+  #aboutBox p:last-child { margin-bottom: 0; }
+  #aboutClose { position: absolute; top: 10px; right: 10px; width: 26px; height: 26px; padding: 0;
+    z-index: 2; background: none; border: none; font-size: 14px; cursor: pointer;
+    color: color-mix(in srgb, var(--paper-ink) 70%, var(--paper)); }
+  #aboutClose:hover { color: var(--paper-ink); }
+  #aboutClose:focus-visible { outline-color: var(--paper-ink); }
+  /* While About is open the strip, lockup and attribution are removed from the page, not
+     stacked under it */
+  body[data-about="open"] #dial, body[data-about="open"] #lockup,
+  body[data-about="open"] .maplibregl-ctrl-bottom-left { display: none; }
+
+  button:focus-visible { outline: 1px solid var(--ink-dim); outline-offset: 2px; }
+
+  /* The attribution ⓘ shares the strip's left edge and the lockup's 20px baseline;
+     the strip stacks above it at the offset measured in init(). */
+  .maplibregl-ctrl-bottom-left .maplibregl-ctrl { margin: 0 0 20px 18px; }
 </style>
 </head>
 <body>
 
 <div id="map"></div>
 
-<div id="panel">
-  <div id="panelHead">
-    <h1>SILLAGE</h1>
-    <div id="panelBtns">
-      <button class="iconbtn" id="collapseBtn" title="Collapse panel" aria-label="Collapse panel">
-        <svg id="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
-      </button>
-      <button class="iconbtn" id="hideBtn" title="Hide panel" aria-label="Hide panel">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/><path d="M4 4v16"/></svg>
-      </button>
-    </div>
-  </div>
-  <div class="sub">Montréal transit · trail replay</div>
-  <div id="clock">--:--:--</div>
-
-  <div id="panelBody">
-  <div id="stats">Loading…</div>
-  <div id="live">&nbsp;</div>
-  <div id="source"></div>
-  <div id="banner"></div>
-
-  <div class="row" id="sceneRow" style="display:none">
-    <label>Scene</label>
-    <select id="sceneSel" style="flex:1"></select>
-  </div>
-
-  <div class="row">
-    <label>Time</label>
-    <input type="range" id="timeSlider" min="0" max="1000" value="0" step="1" />
-  </div>
-  <div class="row">
-    <label>Speed</label>
-    <button data-speed="30">30×</button>
-    <button data-speed="60" class="active">60×</button>
-    <button data-speed="120">120×</button>
-    <button data-speed="300">300×</button>
-  </div>
-  <div class="row">
-    <label>Trail</label>
-    <input type="range" id="trailSlider" min="60" max="1800" value="600" step="60" />
-    <span id="trailVal" style="font-size:11px;color:#5c6373;min-width:40px;text-align:right;">10m</span>
-  </div>
-  <div class="row">
-    <label></label>
-    <button id="playBtn">⏸ Pause</button>
-    <button id="resetBtn">⟲ Reset</button>
-    <button id="shadeBtn" class="active">Speed shading</button>
-  </div>
+<aside id="side" aria-label="Controls" data-open="false" inert>
+  <button id="sideClose" type="button" aria-label="Close controls">&#215;</button>
 
   <div id="legend">
-    <div id="legendHint">LAYERS</div>
+    <h2>Layers</h2>
     <div id="modeList"></div>
     <div id="ramp"></div>
     <div id="rampLabels"><span id="rampLo">stopped</span><span id="rampHi">fast</span></div>
   </div>
+
+  <h2>Rendering</h2>
+  <div class="ctlRow">
+    <label for="trailSlider">Trail</label>
+    <input type="range" id="trailSlider" min="60" max="1800" value="600" step="60" />
+    <span class="val" id="trailVal">10m</span>
+  </div>
+  <button type="button" class="toggleRow" id="shadeBtn" aria-pressed="true">Speed shading<span class="state">on</span></button>
+
+  <div id="sceneSection" hidden>
+    <h2>Scenes</h2>
+    <div id="sceneList"></div>
+  </div>
+
+  <h2>Audio</h2>
+  <div id="audioRow">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+      <path d="M4 9v6h4l5 4V5L8 9H4z"/><line x1="16" y1="9" x2="20" y2="15"/><line x1="20" y1="9" x2="16" y2="15"/>
+    </svg>
+    <span>off</span>
+  </div>
+</aside>
+
+<div id="lockup">
+  <div class="title">SILLAGE</div>
+  <div class="sub">A replay of Montréal in motion</div>
+  <div class="links">
+    <button type="button" id="aboutLink" aria-haspopup="dialog">[About]</button><button type="button" id="ctlLink" aria-expanded="false" aria-controls="side">[Controls]</button>
   </div>
 </div>
 
-<button id="showBtn" title="Show panel" aria-label="Show panel">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-       stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="18" r="2"/>
-  </svg>
-</button>
+<div id="dial">
+  <div id="banner" role="status" aria-live="polite">Loading…</div>
+  <div id="dialRow">
+    <button id="playBtn" type="button" aria-label="Pause">❚❚</button>
+    <div id="clock"><span id="clockTime">--:--:--</span><small id="clockTz"></small></div>
+    <input type="range" id="timeSlider" min="0" max="1000" value="0" step="1" aria-label="Time" />
+    <div id="speeds">
+      <button type="button" data-speed="30">30×</button>
+      <button type="button" data-speed="60" class="active">60×</button>
+      <button type="button" data-speed="120">120×</button>
+      <button type="button" data-speed="300">300×</button>
+    </div>
+  </div>
+</div>
+
+<div id="about">
+  <div id="aboutBox" role="dialog" aria-modal="true" aria-labelledby="aboutTitle" tabindex="-1">
+    <button id="aboutClose" type="button" aria-label="Close">&#215;</button>
+    <h3 id="aboutTitle">SILLAGE</h3>
+    <p>Montréal's transit network, drawn through the trails its vehicles leave behind.</p>
+    <p>Sillage brings together more than 7.6 million recorded positions, tracking buses and aircraft at 20-second intervals since April 2026, alongside schedule-simulated métro, REM, and commuter rail services.</p>
+    <p>Colour distinguishes each mode of transport, drawing from the official palettes of Montréal's transit operators, while brightness reflects vehicle speed. This site presents a series of curated scenes rendered from the recorded data. Run the project locally to query the full archive across arbitrary time windows.</p>
+    <p>Sonification is currently in development.</p>
+  </div>
+</div>
 
 <script>
 const { TripsLayer, ScatterplotLayer, MapboxOverlay } = deck;
 
-/* ---- Panel collapse / hide ----------------------------------
+/* ---- Chrome: sidebar, About, bottom-strip auto-hide ------------
    Independent of the data, so it lives outside init() — it still works even
-   if trips.json fails to load.
+   if nothing loads. Open/closed state lives in data attributes (#side's
+   data-open, body's data-about), never in :focus-visible / :focus-within,
+   which flip mid-handler.
    ------------------------------------------------------------ */
-(function () {
-  const panel = document.getElementById("panel");
-  const showBtn = document.getElementById("showBtn");
+const ui = (function () {
+  const side      = document.getElementById("side");
+  const ctlLink   = document.getElementById("ctlLink");
+  const about     = document.getElementById("about");
+  const aboutBox  = document.getElementById("aboutBox");
+  const aboutLink = document.getElementById("aboutLink");
+  const dial      = document.getElementById("dial");
+  const playBtn   = document.getElementById("playBtn");
 
-  document.getElementById("collapseBtn").addEventListener("click", () => {
-    const collapsed = panel.classList.toggle("collapsed");
-    document.getElementById("collapseBtn").title = collapsed ? "Expand panel" : "Collapse panel";
+  /* Sidebar. Four ways out: the × button, [Controls] again, Escape, and any
+     pointerdown on the map. The bracket label never changes. */
+  const sideOpen = () => side.dataset.open === "true";
+  function openSide(open) {
+    side.dataset.open = open ? "true" : "false";
+    side.inert = !open;
+    ctlLink.setAttribute("aria-expanded", String(open));
+    // Do not strand keyboard focus inside a closed dock
+    if (!open && side.contains(document.activeElement)) ctlLink.focus();
+  }
+  ctlLink.addEventListener("click", () => openSide(!sideOpen()));
+  document.getElementById("sideClose").addEventListener("click", () => openSide(false));
+  document.getElementById("map").addEventListener("pointerdown", () => openSide(false));
+
+  /* About. A modal: scrim click closes, Escape closes, focus stays inside
+     while it is open and returns to the opener afterwards. The strip and
+     lockup are hidden by body[data-about="open"] in the CSS. */
+  const aboutOpen = () => document.body.dataset.about === "open";
+  const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  let aboutOpener = null;
+  function openAbout() {
+    aboutOpener = document.activeElement;
+    document.body.dataset.about = "open";
+    aboutBox.focus();
+  }
+  function closeAbout() {
+    if (!aboutOpen()) return;
+    document.body.dataset.about = "";
+    if (aboutOpener && aboutOpener.focus) aboutOpener.focus();
+    aboutOpener = null;
+    poke();   // the strip may have faded while it was display:none
+  }
+  aboutLink.addEventListener("click", openAbout);
+  document.getElementById("aboutClose").addEventListener("click", closeAbout);
+  about.addEventListener("click", e => { if (e.target === about) closeAbout(); });
+  // Focus trap: Tab and Shift+Tab wrap inside the dialog
+  about.addEventListener("keydown", e => {
+    if (e.key !== "Tab") return;
+    const items = [...aboutBox.querySelectorAll(FOCUSABLE)].filter(el => !el.disabled);
+    if (!items.length) { e.preventDefault(); return; }
+    const first = items[0], last = items[items.length - 1], cur = document.activeElement;
+    if (e.shiftKey && (cur === first || cur === aboutBox)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && cur === last)                  { e.preventDefault(); first.focus(); }
+  });
+  // Anything that still lands focus outside the dialog (a click into the scrim, a
+  // screen-reader jump) is pulled back in
+  document.addEventListener("focusin", e => {
+    if (aboutOpen() && !aboutBox.contains(e.target)) aboutBox.focus();
   });
 
-  document.getElementById("hideBtn").addEventListener("click", () => {
-    panel.classList.add("gone");
-    showBtn.classList.add("visible");
-  });
-
-  showBtn.addEventListener("click", () => {
-    panel.classList.remove("gone");
-    showBtn.classList.remove("visible");
-  });
-
-  // Esc hides the panel, handy for screenshots
+  /* Escape: About first, then the sidebar */
   window.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
-    panel.classList.toggle("gone");
-    showBtn.classList.toggle("visible");
+    if (aboutOpen()) closeAbout();
+    else if (sideOpen()) openSide(false);
   });
+
+  /* Bottom-strip auto-hide. While the replay is playing the strip fades after
+     FADE_MS without pointer/key/wheel activity; hovering it holds it; paused
+     never fades; a warn/error status pins it (see #banner in the CSS). The
+     lockup is not part of this and never hides. */
+  const FADE_MS = 3000;
+  let playing = false;   // init() flips this once the replay runs; nothing fades before that
+  let pinned = false;
+  let fadeTimer;
+  function poke() {
+    dial.classList.remove("faded");
+    if (fadeTimer !== undefined) { clearTimeout(fadeTimer); fadeTimer = undefined; }
+    if (!playing || pinned) return;
+    fadeTimer = setTimeout(() => {
+      fadeTimer = undefined;
+      if (playing && !pinned && !dial.matches(":hover")) dial.classList.add("faded");
+    }, FADE_MS);
+  }
+  for (const ev of ["pointermove", "pointerdown", "keydown", "wheel"]) {
+    window.addEventListener(ev, poke, { passive: true });
+  }
+  dial.addEventListener("pointerleave", poke);
+
+  function setPlaying(p) {
+    playing = p;
+    playBtn.textContent = p ? "❚❚" : "▶";
+    playBtn.setAttribute("aria-label", p ? "Pause" : "Play");
+    poke();
+  }
+  function setPinned(p) { pinned = p; poke(); }
+
+  return { setPlaying, setPinned };
 })();
 
 /* ============================================================
@@ -421,6 +561,12 @@ for (const m of Object.values(MODES)) {
   }
 }
 
+// The status line's warning and error tones are not hand-picked either: the fallback
+// warning borrows metro Orange's base colour, the failure tone borrows Aircraft's.
+document.getElementById("banner").style.cssText =
+  `--warn: rgb(${MODES.metro.bases["2"].join(",")}); ` +
+  `--error: rgb(${MODES.aircraft.base.join(",")})`;
+
 // The ramp a specific trip should use. Single-hue modes share one; metro resolves by
 // route_id, which is exactly what the simulator puts in `label`.
 function tripRamp(trip) {
@@ -456,7 +602,7 @@ const SPEED_GAMMA = 0.75;       // <1 = lifts the low/mid speed range a little
    use `busiest_hour` instead.
 
    The static export is still a fallback, but never a silent one: any
-   fallback or non-200 is reported in the panel, because a silent
+   fallback or non-200 is reported in the status line, because a silent
    fallback is exactly what made a dead backend look like a working page.
    ------------------------------------------------------------------ */
 
@@ -465,17 +611,42 @@ const PASSTHROUGH = ["layer", "start", "end", "hours", "route",
                      "min_points", "include_ground"];
 const SIM_MODES = ["metro", "train", "rem"];
 
-function banner(msg, isError) {
+/* The bottom strip's first row is one status line. Normally it says which scene or
+   window is on screen; a fallback or failure notice takes it over (and its tone), and
+   the source line, if any, follows underneath. Any warn/error state also pins the
+   strip visible — see ui.setPinned(). */
+const status = { notice: "", level: "", source: "" };
+
+function renderStatus() {
   const el = document.getElementById("banner");
-  el.innerHTML = msg;
-  el.className = "show" + (isError ? " err" : "");
+  el.className = status.level;
+  el.innerHTML = [status.notice, status.source].filter(Boolean).join("<br>");
+  ui.setPinned(Boolean(status.level));
 }
 
-function fmtClock(iso) {
-  const d = new Date(iso);
-  return isNaN(d) ? String(iso)
-    : d.toLocaleString([], { month: "short", day: "numeric",
-                             hour: "2-digit", minute: "2-digit", hour12: false });
+function banner(msg, isError) {
+  status.notice = msg;
+  status.level = isError ? "error" : "warn";
+  renderStatus();
+}
+
+// Times are shown in Montréal's zone whatever the viewer's is: the data is Montréal's.
+const TZ = "America/Montreal";
+
+function tzName(d) {
+  const part = new Intl.DateTimeFormat("en-US", { timeZone: TZ, timeZoneName: "short" })
+    .formatToParts(d).find(p => p.type === "timeZoneName");
+  return part ? part.value : "";
+}
+
+function fmtWindow(startIso, endIso) {
+  const a = new Date(startIso), b = new Date(endIso);
+  if (isNaN(a) || isNaN(b)) return `${startIso} – ${endIso}`;
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+  const hm  = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  return day.format(a) === day.format(b)
+    ? `${day.format(a)} ${hm.format(a)}–${hm.format(b)} ${tzName(b)}`
+    : `${day.format(a)} ${hm.format(a)} – ${day.format(b)} ${hm.format(b)} ${tzName(b)}`;
 }
 
 // Pull the point count out of the API's 413 detail so the banner can state it.
@@ -558,22 +729,19 @@ async function loadFromApi(state) {
 
 // What was actually served — shown so a mismatch with the URL is obvious at a glance.
 function showSource(data, state) {
-  const el = document.getElementById("source");
-  const modes = (data.modes || []).join(", ") || "—";
+  const window_ = fmtWindow(data.start_time, data.end_time);
   const bits = [];
-  bits.push("<b>" + fmtClock(data.start_time) + "</b> → <b>" +
-            fmtClock(data.end_time) + "</b>");
-  bits.push("modes <b>" + modes + "</b>");
-  bits.push(state.live ? "source <b>/api/trips</b>"
-          : state.scene ? "source <b>curated scene</b>"
-          : "source <b>static file</b>");
+  if (state.live)        bits.push("live: <b>/api/trips</b> — " + window_);
+  else if (state.scene)  bits.push("scene: <b>" + state.sceneLabel + "</b> — recorded " + window_);
+  else                   bits.push("static <b>" + STATIC_URL + "</b> — " + window_);
   if (state.derived) bits.push("window: " + state.derived);
   else if (state.live) bits.push("window: from URL");
-  el.innerHTML = bits.join(" · ");
-  el.className = state.live ? "live" : "";
+  bits.push((data.trips || []).length.toLocaleString() + " vehicles");
+  status.source = bits.join(" · ");
+  renderStatus();
 }
 
-const loadState = { live: false, scene: null, derived: null, url: null, forwarded: [] };
+const loadState = { live: false, scene: null, sceneLabel: null, derived: null, url: null, forwarded: [] };
 
 /* ------------------------------------------------------------------
    Curated scenes (GitHub Pages mode).
@@ -595,24 +763,42 @@ async function fetchManifest() {
   } catch (e) { return null; }
 }
 
-function buildScenePicker(manifest, current) {
-  const sel = document.getElementById("sceneSel");
-  sel.innerHTML = "";
-  for (const sc of manifest.scenes) {
-    const o = document.createElement("option");
-    o.value = sc.slug;
-    o.textContent = sc.label;
-    if (sc.slug === current) o.selected = true;
-    sel.appendChild(o);
+// "2026-08-20 · 1 h · all layers" — the subline under each scene's name
+function describeScene(sc) {
+  const a = new Date(sc.start), b = new Date(sc.end);
+  const bits = [];
+  if (!isNaN(a)) {
+    bits.push(new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(a));
   }
-  // Full reload on change: init() builds the map and closures exactly once,
-  // and a clean reload is simpler and safer than tearing all of that down.
-  sel.addEventListener("change", () => {
-    const u = new URL(location.href);
-    u.searchParams.set("scene", sel.value);
-    location.href = u.toString();
-  });
-  document.getElementById("sceneRow").style.display = "flex";
+  if (!isNaN(a) && !isNaN(b)) {
+    const h = (b - a) / 3600000;
+    bits.push((Math.abs(h - Math.round(h)) < 0.05 ? String(Math.round(h)) : h.toFixed(1)) + " h");
+  }
+  const modes = sc.modes || [];
+  bits.push(modes.length >= Object.keys(MODES).length ? "all layers"
+    : modes.map(k => (MODES[k] ? MODES[k].label : k).toLowerCase()).join(" + "));
+  return bits.join(" · ");
+}
+
+function buildScenePicker(manifest, current) {
+  const list = document.getElementById("sceneList");
+  list.innerHTML = "";
+  for (const sc of manifest.scenes) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "sceneRow" + (sc.slug === current ? " active" : "");
+    if (sc.slug === current) row.setAttribute("aria-current", "true");
+    row.innerHTML = `${sc.label}<small>${describeScene(sc)}</small>`;
+    // Full reload on change: init() builds the map and closures exactly once,
+    // and a clean reload is simpler and safer than tearing all of that down.
+    row.addEventListener("click", () => {
+      const u = new URL(location.href);
+      u.searchParams.set("scene", sc.slug);
+      location.href = u.toString();
+    });
+    list.appendChild(row);
+  }
+  document.getElementById("sceneSection").hidden = false;
 }
 
 async function loadScene(manifest) {
@@ -623,6 +809,7 @@ async function loadScene(manifest) {
   const r = await fetch("scenes/" + sc.file);
   if (!r.ok) throw new Error("scenes/" + sc.file + " -> " + r.status);
   loadState.scene = sc.slug;
+  loadState.sceneLabel = sc.label;
   return r.json();
 }
 
@@ -655,7 +842,6 @@ async function boot() {
 boot()
   .then(data => { init(data); showSource(data, loadState); })
   .catch(err => {
-    document.getElementById("stats").textContent = "Load failed";
     banner("Nothing could be loaded. " + String(err.message || err), true);
   });
 
@@ -683,12 +869,6 @@ function init(data) {
   const enabled = {};
   for (const k of present) enabled[k] = true;
 
-  const totalPoints = trips.reduce((a, t) => a + t.path.length, 0);
-  document.getElementById("stats").innerHTML =
-    `<span>${trips.length.toLocaleString()}</span> vehicles · ` +
-    `<span>${totalPoints.toLocaleString()}</span> points · ` +
-    `<span>${(duration_sec / 60).toFixed(0)}</span> min`;
-
   buildLegend(byMode, enabled, () => render());
 
   const map = new maplibregl.Map({
@@ -700,7 +880,29 @@ function init(data) {
     bearing: -10,
     attributionControl: false,
   });
-  map.addControl(new maplibregl.AttributionControl({ compact: true }));
+  // Attribution goes bottom-left, under the strip — the lockup owns the bottom-right corner.
+  map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
+  const attribution = document.querySelector("#map .maplibregl-ctrl-attrib");
+  // The strip sits above the attribution pill at a measured offset, not a guessed one: the
+  // pill is taller when its text wraps, and it starts expanded (see below).
+  const dial = document.getElementById("dial");
+  const STRIP_GAP = 8;
+  function placeStrip() {
+    const r = attribution.getBoundingClientRect();
+    // Until the style arrives the pill is `maplibregl-attrib-empty` and display:none; a
+    // zero rect must not be "measured" — leave the stylesheet's default until it shows.
+    dial.style.bottom = r.height ? Math.round(window.innerHeight - r.top + STRIP_GAP) + "px" : "";
+  }
+  placeStrip();
+  new MutationObserver(placeStrip).observe(attribution, { attributes: true, attributeFilter: ["class", "open"] });
+  window.addEventListener("resize", placeStrip);
+  // In MapLibre 4.7.1 a compact attribution starts EXPANDED: _updateCompact adds
+  // `open` + `maplibregl-compact-show` synchronously inside addControl. Collapse it to the
+  // ⓘ once the style has loaded — on "load", never "idle": this map may never idle.
+  map.once("load", () => {
+    attribution.classList.remove("maplibregl-compact-show");
+    attribution.removeAttribute("open");
+  });
 
   const overlay = new MapboxOverlay({ interleaved: false, layers: [] });
 
@@ -742,7 +944,7 @@ function init(data) {
   slider.addEventListener("input", e => {
     currentTime = +e.target.value;
     playing = false;
-    document.getElementById("playBtn").textContent = "▶ Play";
+    ui.setPlaying(false);
     render();
   });
 
@@ -762,27 +964,31 @@ function init(data) {
     });
   });
 
-  document.getElementById("playBtn").addEventListener("click", e => {
+  document.getElementById("playBtn").addEventListener("click", () => {
     playing = !playing;
-    e.target.textContent = playing ? "⏸ Pause" : "▶ Play";
+    ui.setPlaying(playing);
   });
 
-  document.getElementById("resetBtn").addEventListener("click", () => {
-    currentTime = 0;
-    render();
-  });
-
-  document.getElementById("shadeBtn").addEventListener("click", e => {
+  const shadeBtn = document.getElementById("shadeBtn");
+  shadeBtn.addEventListener("click", () => {
     speedShading = !speedShading;
-    e.target.classList.toggle("active", speedShading);
+    shadeBtn.setAttribute("aria-pressed", String(speedShading));
+    shadeBtn.querySelector(".state").textContent = speedShading ? "on" : "off";
     document.getElementById("ramp").style.opacity = speedShading ? 1 : 0.3;
     render();
   });
+
+  // Clock: Montréal time, zone label set once (it does not change within a window)
+  const clockFmt = new Intl.DateTimeFormat("en-CA",
+    { timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+  const clockTime = document.getElementById("clockTime");
+  document.getElementById("clockTz").textContent = tzName(new Date(startMs));
 
   // Deliberately not gated on map "load". Attaching the deck.gl overlay needs the map's
   // GL context and so does wait for that event, but the replay itself does not: gating
   // the loop on "load" meant a slow or failed CARTO basemap froze the clock at --:--:--
   // even though every trip was already in memory.
+  ui.setPlaying(playing);
   animate();
 
   function animate() {
@@ -800,12 +1006,9 @@ function init(data) {
   function render() {
     slider.value = currentTime;
     const realMs = startMs + currentTime * 1000;
-    document.getElementById("clock").textContent =
-      new Date(realMs).toLocaleTimeString("en-CA", { hour12: false }) +
-      "  · t+" + Math.floor(currentTime) + "s";
+    clockTime.textContent = clockFmt.format(realMs);
 
     const layers = [];
-    const liveParts = [];
 
     for (const key of present) {
       if (!enabled[key]) continue;
@@ -833,8 +1036,6 @@ function init(data) {
           radius: mode.radius[0] + mode.radius[1] * sn,
         });
       }
-      liveParts.push(`<span>${heads.length.toLocaleString()}</span> ${mode.label.toLowerCase()}`);
-
       layers.push(new TripsLayer({
         id: "trails-" + key,
         data: modeTrips,
@@ -865,9 +1066,6 @@ function init(data) {
         updateTriggers: { getFillColor: speedShading },
       }));
     }
-
-    document.getElementById("live").innerHTML =
-      liveParts.length ? liveParts.join(" · ") + " in motion" : "&nbsp;";
 
     overlay.setProps({ layers });
   }
