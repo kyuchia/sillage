@@ -230,12 +230,15 @@
      Left-aligned, so the trailing tracking gap needs no compensation here. */
   #aboutBox h3 { margin: 0 0 14px; font-size: 16px; letter-spacing: .22em; font-weight: 500;
     color: var(--paper-ink); }
-  /* No text-wrap: pretty here. In Chrome 152 it crashes the renderer the moment this box
-     paints — only in combination with the box's backdrop-filter AND the multiplied grain
-     layer; drop either and it survives (reproduced 5/5 vs 3/3 over DevTools). The 544px
-     width above is what keeps the paragraph endings clean. */
+  /* Paragraph endings. The box is 520px because, with the copy fixed, that width gives the
+     best last-line lengths (see the sweep noted on #aboutBox). text-wrap: pretty is kept as
+     a residual guard against single-word orphans if the copy or font ever changes; at 520
+     it alters none of the four endings. An earlier note here blamed a Chrome renderer crash
+     on pretty + backdrop-filter + the grain layer. That was a defect in the DevTools test
+     harness (its client slept without draining the socket), not a browser bug. */
   #aboutBox p { font-size: 14px; line-height: 1.7; margin: 0 0 12px;
-    color: color-mix(in srgb, var(--paper-ink) 80%, var(--paper)); }
+    color: color-mix(in srgb, var(--paper-ink) 80%, var(--paper));
+    text-wrap: pretty; }
   #aboutBox p:last-child { margin-bottom: 0; }
   /* The paper copy of the chip: border and glyph in the same paper-ink strength, both a
      step darker on hover. No dark-surface variables here. */
