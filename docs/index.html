@@ -74,13 +74,21 @@
   /* Row 1. Which scene/window was actually served — a mismatch between the URL and the
      rendered data must be visible at a glance. In a fallback (.warn) or failure (.error)
      state the whole line takes that tone and the strip stops auto-hiding: a fading
-     fallback warning would be a silent fallback. */
+     fallback warning would be a silent fallback. The line is never empty. */
   #banner { font-size: 12.5px; color: var(--ink-dim); letter-spacing: .02em; line-height: 1.45;
     padding-bottom: 7px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+  /* Neutral: exactly one line box, so the card's height never changes in ordinary use.
+     A long name ellipses; the full text is in `title`. */
+  #banner:not(.warn):not(.error) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    height: 1.45em; }
+  /* Warn and error wrap to as many lines as the diagnosis needs: the card grows and lifts
+     the clock and scrubber, which only happens on a genuine failure. */
   #banner.warn  { color: var(--warn); }
   #banner.error { color: var(--error); }
   #banner b { font-weight: 500; color: inherit; }
-  #banner code { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; }
+  /* line-height 1 keeps the monospace span inside the line box: at the inherited 1.45 its
+     taller metrics stretched a line by a fraction of a pixel. */
+  #banner code { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1; }
 
   /* Row 2 */
   #dialRow { display: flex; align-items: center; gap: 14px; }
@@ -618,20 +626,36 @@ const SPEED_GAMMA = 0.75;       // <1 = lifts the low/mid speed range a little
    ------------------------------------------------------------------ */
 
 const STATIC_URL = "../data/trips.json";
+const RANGE_TIMEOUT_MS = 10000;
+// AbortSignal.timeout where the browser has it; without it the request has no deadline.
+function timeoutSignal(ms) {
+  return typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined;
+}
 const PASSTHROUGH = ["layer", "start", "end", "hours", "route",
                      "min_points", "include_ground"];
 const SIM_MODES = ["metro", "train", "rem"];
 
-/* The bottom strip's first row is one status line. Normally it says which scene or
-   window is on screen; a fallback or failure notice takes it over (and its tone), and
-   the source line, if any, follows underneath. Any warn/error state also pins the
-   strip visible — see ui.setPinned(). */
+/* The bottom strip's first row is one status line, always a single line and never empty.
+   Its ordinary content is `source`: which scene or window is on screen. A fallback or
+   failure notice takes the line over, and its tone, with the source kept after it —
+   content swaps, presence never does. Only a warn/error level pins the strip visible
+   (ui.setPinned); the neutral state auto-hides like any other. */
 const status = { notice: "", level: "", source: "" };
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+// A baked scene is declared by name only, exactly as the sidebar picker labels it.
+// What a scene is, and that it is not live data, is About's job, not the chrome's.
+const sceneLine = label => "scene: " + esc(label);
 
 function renderStatus() {
   const el = document.getElementById("banner");
   el.className = status.level;
-  el.innerHTML = [status.notice, status.source].filter(Boolean).join("<br>");
+  el.innerHTML = status.level
+    ? [status.notice, status.source].filter(Boolean).join(" · ")
+    : (status.source || "Loading…");
+  // Only the neutral line can ellipse, so only it needs the full text as a tooltip.
+  if (status.level) el.removeAttribute("title");
+  else el.title = el.textContent;
   ui.setPinned(Boolean(status.level));
 }
 
@@ -695,9 +719,31 @@ async function loadFromApi(state) {
 
   // Only derive a window when the URL gave none.
   if (!q.has("start") && !q.has("end") && !q.has("hours")) {
-    const rangeRes = await fetch("/api/range");
+    // The SHAPE of this request's failure decides what kind of deployment this is (see
+    // boot()), never the hostname. A 404 means no API is mounted here at all — the static
+    // case. Anything else (non-404 status, network error, timeout, a body that does not
+    // parse) means an API is present and broken. The API itself never 404s this route:
+    // a database failure surfaces as 503.
+    let rangeRes;
+    try {
+      rangeRes = await fetch("/api/range", { signal: timeoutSignal(RANGE_TIMEOUT_MS) });
+    } catch (e) {
+      throw new Error("<code>/api/range</code> " + (e && e.name === "TimeoutError"
+        ? "did not respond within " + RANGE_TIMEOUT_MS / 1000 + " s"
+        : "could not be reached (" + esc(e && e.message) + ")"));
+    }
+    if (rangeRes.status === 404) {
+      const e = new Error("<code>/api/range</code> returned <b>404</b>");
+      e.noApi = true;
+      throw e;
+    }
     if (!rangeRes.ok) throw new Error(await describeFailure(rangeRes, "/api/range"));
-    const range = await rangeRes.json();
+    let range;
+    try {
+      range = await rangeRes.json();
+    } catch (e) {
+      throw new Error("<code>/api/range</code> returned a body that is not JSON");
+    }
 
     // `overlap` is bus ∩ aircraft — the right default for recorded layers, and the
     // wrong one for simulated modes, which it knows nothing about.
@@ -740,11 +786,15 @@ async function loadFromApi(state) {
 
 // What was actually served — shown so a mismatch with the URL is obvious at a glance.
 function showSource(data, state) {
+  if (state.scene) {
+    status.source = sceneLine(state.sceneLabel);
+    renderStatus();
+    return;
+  }
   const window_ = fmtWindow(data.start_time, data.end_time);
   const bits = [];
-  if (state.live)        bits.push("live: <b>/api/trips</b> — " + window_);
-  else if (state.scene)  bits.push("scene: <b>" + state.sceneLabel + "</b> — recorded " + window_);
-  else                   bits.push("static <b>" + STATIC_URL + "</b> — " + window_);
+  if (state.live) bits.push("live: <b>/api/trips</b> — " + window_);
+  else            bits.push("static <b>" + STATIC_URL + "</b> — " + window_);
   if (state.derived) bits.push("window: " + state.derived);
   else if (state.live) bits.push("window: from URL");
   bits.push((data.trips || []).length.toLocaleString() + " vehicles");
@@ -755,17 +805,19 @@ function showSource(data, state) {
 const loadState = { live: false, scene: null, sceneLabel: null, derived: null, url: null, forwarded: [] };
 
 /* ------------------------------------------------------------------
-   Curated scenes (GitHub Pages mode).
+   Curated scenes.
 
-   On github.io there is no backend and never will be: baked scenes in
-   docs/scenes/ are THE mode, not a fallback, so no warning banner —
+   Baked scenes in docs/scenes/ are what a static deployment serves:
+   GitHub Pages, or any plain static server over docs/. Which kind of
+   deployment this is gets decided in boot() by the shape of /api/range's
+   failure, never by hostname. A 404 means no API is mounted, so the
+   scenes are the normal state and the status line stays neutral —
    design decision #10 is about SILENT fallbacks, not about deliberately
-   static deployments. Locally the API stays first; scenes serve as a
-   loud fallback if it is down; the old ../data/trips.json remains the
-   last resort.
+   static deployments. Any other failure means an API exists and is
+   broken, so the scenes are a loud fallback. The old ../data/trips.json
+   remains the last resort.
    ------------------------------------------------------------------ */
 const SCENES_URL = "scenes/manifest.json";
-const ON_PAGES = location.hostname.endsWith("github.io");
 
 async function fetchManifest() {
   try {
@@ -803,6 +855,9 @@ function buildScenePicker(manifest, current) {
     // Full reload on change: init() builds the map and closures exactly once,
     // and a clean reload is simpler and safer than tearing all of that down.
     row.addEventListener("click", () => {
+      // The reload takes a moment; the line names the chosen scene straight away.
+      status.source = sceneLine(sc.label);
+      renderStatus();
       const u = new URL(location.href);
       u.searchParams.set("scene", sc.slug);
       location.href = u.toString();
@@ -817,37 +872,48 @@ async function loadScene(manifest) {
   const slug = q.get("scene") || manifest.scenes[0].slug;
   const sc = manifest.scenes.find(x => x.slug === slug) || manifest.scenes[0];
   buildScenePicker(manifest, sc.slug);
+  // Named before its data arrives, so the line never lags the picker.
+  loadState.sceneLabel = sc.label;
+  status.source = sceneLine(sc.label);
+  renderStatus();
   const r = await fetch("scenes/" + sc.file);
   if (!r.ok) throw new Error("scenes/" + sc.file + " -> " + r.status);
   loadState.scene = sc.slug;
-  loadState.sceneLabel = sc.label;
   return r.json();
 }
 
 async function boot() {
-  if (ON_PAGES) {
-    const m = await fetchManifest();
-    if (!m) throw new Error("scenes/manifest.json missing - run scripts/bake_scenes.sh and commit docs/scenes/");
-    return loadScene(m);
-  }
+  let apiErr;
   try {
     const data = await loadFromApi(loadState);
     loadState.live = true;
     return data;
   } catch (err) {
-    console.warn("API load failed:", err.message);
-    const m = await fetchManifest();
+    apiErr = err;
+  }
+  const m = await fetchManifest();
+  if (apiErr.noApi) {
+    // No API is mounted here: a static deployment, where the baked scenes are the normal
+    // state rather than a fallback. Nothing in the chrome — About declares what the
+    // scenes are. The console keeps the trace for a developer.
+    console.info("Sillage: /api/range returned 404, so no API is mounted here; using the baked scenes.");
+    if (m) return loadScene(m);
+  } else {
+    console.warn("API load failed:", apiErr.message);
     if (m) {
-      banner("API unavailable: " + err.message + "<br>Showing baked scenes instead.", false);
+      banner("API unavailable: " + apiErr.message + "; showing baked scenes", false);
       return loadScene(m);
     }
-    banner("API unavailable: " + err.message +
-           "<br>Showing static <code>" + STATIC_URL + "</code> instead - " +
-           "this is <b>not</b> the window you asked for.", false);
-    const r = await fetch(STATIC_URL);
-    if (!r.ok) throw new Error(STATIC_URL + " -> " + r.status);
-    return r.json();
   }
+  banner("API unavailable: " + apiErr.message + "; showing static <code>" + STATIC_URL +
+         "</code>, <b>not</b> the window you asked for", false);
+  const r = await fetch(STATIC_URL);
+  if (!r.ok) {
+    throw new Error(STATIC_URL + " -> " + r.status + (apiErr.noApi
+      ? "; no API is mounted here and scenes/manifest.json is missing — run scripts/bake_scenes.sh and commit docs/scenes/"
+      : ""));
+  }
+  return r.json();
 }
 
 boot()
@@ -929,7 +995,7 @@ function init(data) {
       map.addControl(overlay);
     } catch (e) {
       banner("Basemap overlay failed to attach: " + e.message +
-             "<br>Trails cannot draw, though the data loaded fine.", true);
+             ". Trails cannot draw, though the data loaded fine.", true);
     }
   }
 
