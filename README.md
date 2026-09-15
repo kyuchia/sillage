@@ -123,7 +123,7 @@ uvicorn api.main:app --port 8000 &
 ./scripts/bake_scenes.sh
 ```
 
-When running locally, the visualization prefers the live API. Baked scenes act as a fallback, and the interface indicates when fallback data is being shown.
+When running locally, the visualization prefers the live API and falls back to the baked scenes if it is unavailable, and says so when it does. On the published demo there is no API to prefer, so the scenes are the content rather than a fallback.
 
 ---
 
