@@ -257,16 +257,47 @@
     color: color-mix(in srgb, var(--paper-ink) 70%, var(--paper)); }
   #aboutClose:hover { border-color: var(--paper-ink); color: var(--paper-ink); }
   #aboutClose:focus-visible { outline-color: var(--paper-ink); }
-  /* While About is open the strip, lockup and attribution are removed from the page, not
-     stacked under it */
+  /* While About is open the strip, lockup, attribution and camera controls are removed from
+     the page, not stacked under it. The camera rule names the group, not the whole corner, so
+     nothing else MapLibre seats in that corner goes with it. */
   body[data-about="open"] #dial, body[data-about="open"] #lockup,
-  body[data-about="open"] .maplibregl-ctrl-bottom-left { display: none; }
+  body[data-about="open"] .maplibregl-ctrl-bottom-left,
+  body[data-about="open"] .maplibregl-ctrl-top-right .maplibregl-ctrl-group { display: none; }
 
   button:focus-visible { outline: 1px solid var(--ink-dim); outline-offset: 2px; }
 
   /* The attribution ⓘ shares the strip's left edge and the lockup's 20px baseline;
      the strip stacks above it at the offset measured in init(). */
   .maplibregl-ctrl-bottom-left .maplibregl-ctrl { margin: 0 0 20px 18px; }
+
+  /* ---------- camera controls: top right ---------- */
+  /* MapLibre's zoom group plus the Reset view button the script appends to it, in the strip's
+     material: wash, hairline, 14px blur, sharp corners like every chip on the page. Inset 22px
+     from the right to share the lockup's edge, 20px from the top to match the bottom inset. */
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group { margin: 20px 22px 0 0; border-radius: 0;
+    background: var(--wash); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line); box-shadow: none; }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group button + button { border-top: 1px solid var(--line); }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group button:not(:disabled):hover {
+    background-color: rgba(255,255,255,0.06); }
+  /* MapLibre's blue focus shadow and rounded focus corners give way to the page's outline */
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group button:focus { box-shadow: none; border-radius: 0; }
+  /* maplibre-gl.css bakes + and − in as dark (#333) SVGs that vanish on this material, so all
+     three glyphs are drawn here, in the close chip's inks: --ink-dim at rest, --ink on hover.
+     A data URI cannot read a custom property, so those two hexes are copied from :root. */
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group .maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'><path d='M9 14.5h11M14.5 9v11' stroke='%238b93a1' stroke-width='1.5'/></svg>"); }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group .maplibregl-ctrl-zoom-in:not(:disabled):hover .maplibregl-ctrl-icon {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'><path d='M9 14.5h11M14.5 9v11' stroke='%23e8ecf2' stroke-width='1.5'/></svg>"); }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group .maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'><path d='M9 14.5h11' stroke='%238b93a1' stroke-width='1.5'/></svg>"); }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group .maplibregl-ctrl-zoom-out:not(:disabled):hover .maplibregl-ctrl-icon {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'><path d='M9 14.5h11' stroke='%23e8ecf2' stroke-width='1.5'/></svg>"); }
+  /* Reset view: a square outline with a filled square inside, on the same 11px footprint as + */
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group #resetViewBtn .maplibregl-ctrl-icon {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'><rect x='9.75' y='9.75' width='9.5' height='9.5' fill='none' stroke='%238b93a1' stroke-width='1.5'/><rect x='12.5' y='12.5' width='4' height='4' fill='%238b93a1'/></svg>"); }
+  .maplibregl-ctrl-top-right .maplibregl-ctrl-group #resetViewBtn:hover .maplibregl-ctrl-icon {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'><rect x='9.75' y='9.75' width='9.5' height='9.5' fill='none' stroke='%23e8ecf2' stroke-width='1.5'/><rect x='12.5' y='12.5' width='4' height='4' fill='%23e8ecf2'/></svg>"); }
 
   /* The About scrim claims every touch gesture at every width. iOS Safari lets touches fall
      through a scrim to the map beneath it (Tales v8), and iPad Safari at 1024px runs these
@@ -330,6 +361,8 @@
     body[data-side="open"] #map .maplibregl-control-container { display: none; }
     /* The ⓘ sits 16px in from the bottom-left corner, on the lockup's baseline. */
     .maplibregl-ctrl-bottom-left .maplibregl-ctrl { margin: 0 0 16px 16px; }
+    /* The camera group keeps the same 16px from the top-right corner. */
+    .maplibregl-ctrl-top-right .maplibregl-ctrl-group { margin: 16px 16px 0 0; }
 
     /* About: the box scrolls when the copy is taller than a small phone's screen. */
     #aboutBox { margin: 16px; max-height: calc(100% - 32px); overflow-y: auto;
@@ -641,7 +674,7 @@ const ui = (function () {
   }
   function setPinned(p) { pinned = p; poke(); }
 
-  return { setPlaying, setPinned, isNarrow, placeChrome };
+  return { setPlaying, setPinned, isNarrow, placeChrome, closeAbout };
 })();
 
 /* ============================================================
@@ -1122,6 +1155,44 @@ boot()
     banner("Nothing could be loaded. " + String(err.message || err), true);
   });
 
+/* ---- Home view -------------------------------------------------
+   Where Reset view lands: a fixed geographic box, never the data's own extent. That extent
+   moves with the scene and with every layer switch, so a reset computed from it would land
+   somewhere different each time. The box is the island with a hair of margin, and holds the
+   recorded bus extent of every baked scene (lon -73.968 to -73.480, lat 45.403 to 45.701).
+   Aircraft, exo and the REM's Brossard end run past it on purpose.
+   Provenance: that bus extent was measured on 2026-09-16 from the four scenes then baked in
+   docs/scenes/ (morning-peak, evening-peak, night-3am, april-first-night), ignoring a handful
+   of bad (0,0) fixes. Re-baking or adding a scene invalidates the measurement: re-measure
+   before trusting this box.
+   The opening camera is this same fit (frameHome() in init()), so Reset view returns to the
+   framing the page first showed.
+   ------------------------------------------------------------ */
+const HOME_BOUNDS = [[-73.98, 45.40], [-73.47, 45.71]];   // [west, south], [east, north]
+const HOME_PITCH = 45, HOME_BEARING = -10;                 // the opening camera
+const ZOOM_OUT_ALLOWANCE = 2;   // zoom levels the user may pull back past the home fit
+const FRAME_GUTTER = 20;        // clear space between the box and the map edge or the chrome
+
+// Padding for a home fit: the chrome that covers the map, measured rather than guessed.
+function framePadding() {
+  const side   = document.getElementById("side");
+  const dial   = document.getElementById("dial");
+  const lockup = document.getElementById("lockup");
+  const pad = { top: FRAME_GUTTER, right: FRAME_GUTTER, bottom: FRAME_GUTTER, left: FRAME_GUTTER };
+  // The dock covers the left edge only while open, read from its data attribute. offsetWidth
+  // ignores the slide transform, so a fit mid-transition still sees the full width. On a phone
+  // the open panel is the whole screen and hides the controls: not a margin to fit around.
+  if (side.dataset.open === "true" && !ui.isNarrow()) pad.left += side.offsetWidth;
+  // The strip and the lockup both stand on the bottom edge; the taller footprint decides. A
+  // zero rect is display:none (the phone's neutral state, About open) and covers nothing.
+  for (const el of [dial, lockup]) {
+    if (side.contains(el)) continue;   // phone: the lockup is the open panel's header
+    const r = el.getBoundingClientRect();
+    if (r.height) pad.bottom = Math.max(pad.bottom, Math.round(window.innerHeight - r.top) + FRAME_GUTTER);
+  }
+  return pad;
+}
+
 function init(data) {
   const { start_time, duration_sec, trips } = data;
   const startMs = new Date(start_time).getTime();
@@ -1151,10 +1222,9 @@ function init(data) {
   const map = new maplibregl.Map({
     container: "map",
     style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-    center: [-73.5772, 45.5048],
-    zoom: 11,
-    pitch: 45,
-    bearing: -10,
+    // Orientation for the moment between creation and frameHome(), which sets the real camera.
+    pitch: HOME_PITCH,
+    bearing: HOME_BEARING,
     attributionControl: false,
   });
   // Attribution goes bottom-left, under the strip — the lockup owns the bottom-right corner.
@@ -1187,6 +1257,56 @@ function init(data) {
     if (ui.isNarrow()) attribution.classList.add("maplibregl-compact");
     attribution.classList.remove("maplibregl-compact-show");
     attribution.removeAttribute("open");
+  });
+
+  // Camera controls, top right: MapLibre's zoom in / zoom out, with Reset view appended to the
+  // same group through the public DOM so it inherits the group's button size and centring.
+  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+  const cameraGroup = document.querySelector(".maplibregl-ctrl-top-right .maplibregl-ctrl-group");
+  if (cameraGroup) {
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.id = "resetViewBtn";
+    resetBtn.title = "Reset view";
+    resetBtn.setAttribute("aria-label", "Reset view");
+    resetBtn.innerHTML = '<span class="maplibregl-ctrl-icon" aria-hidden="true"></span>';
+    resetBtn.addEventListener("click", resetView);
+    cameraGroup.appendChild(resetBtn);
+  }
+
+  // fitBounds is clamped by whatever minZoom is in force when it runs, so the old floor is
+  // released first; the new floor is ZOOM_OUT_ALLOWANCE below this fit, not a constant.
+  // MapLibre 4.7.1 does honour bearing and pitch in fitBounds options: verified in a browser
+  // on 2026-09-16, so no fit-flat-then-tilt workaround is needed.
+  function frameHome() {
+    map.setMinZoom(0);
+    map.fitBounds(HOME_BOUNDS, { padding: framePadding(), bearing: HOME_BEARING,
+                                 pitch: HOME_PITCH, duration: 0 });
+    map.setMinZoom(Math.max(0, map.getZoom() - ZOOM_OUT_ALLOWANCE));
+  }
+  // The floor alone, for the window as it is now: the same fit, computed without moving the
+  // camera (cameraForBounds is not clamped by minZoom, so nothing needs releasing).
+  function updateZoomFloor() {
+    const cam = map.cameraForBounds(HOME_BOUNDS, { padding: framePadding(), bearing: HOME_BEARING,
+                                                   pitch: HOME_PITCH });
+    if (cam) map.setMinZoom(Math.max(0, cam.zoom - ZOOM_OUT_ALLOWANCE));
+  }
+  // The view only. The sidebar is a dock, not a modal, so it stays; time, speed, trail,
+  // shading, scene and layer switches are not the camera and are not touched.
+  function resetView() {
+    ui.closeAbout();
+    frameHome();
+  }
+  // The opening camera is the home fit, so Reset view lands where the page began. Safe here:
+  // init() runs only after boot() resolves, so the markup and stylesheet are in place; the
+  // sidebar's data-open is already set (false, unless opened during loading, which the fit
+  // then honours); placeStrip() has run; and the map was just created with its container's
+  // size. It also sets the zoom floor, so no separate floor pass is needed at start.
+  frameHome();
+  let floorTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(floorTimer);
+    floorTimer = setTimeout(updateZoomFloor, 200);
   });
 
   const overlay = new MapboxOverlay({ interleaved: false, layers: [] });
