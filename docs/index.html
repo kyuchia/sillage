@@ -267,6 +267,74 @@
   /* The attribution ⓘ shares the strip's left edge and the lockup's 20px baseline;
      the strip stacks above it at the offset measured in init(). */
   .maplibregl-ctrl-bottom-left .maplibregl-ctrl { margin: 0 0 20px 18px; }
+
+  /* The About scrim claims every touch gesture at every width. iOS Safari lets touches fall
+     through a scrim to the map beneath it (Tales v8), and iPad Safari at 1024px runs these
+     desktop rules, so this is not a phone rule. The map takes no pointer input while About
+     is open. */
+  #about { touch-action: none; }
+  body[data-about="open"] #map { pointer-events: none; }
+
+  /* ===================== Speed steps in the sidebar (≤ 900px) =====================
+     Below about 870px the desktop dial row runs out of room, and from 800px the speed
+     steps escape under the lockup. At 900px and below the script moves the one set of
+     speed buttons into a sidebar row beside Trail; this is the only rule that row needs. */
+  @media (max-width: 900px) {
+    #speedRow .lbl { min-width: 34px; }
+  }
+
+  /* ============================ Phone widths (≤ 720px) ============================
+     Every phone rule lives in this one block; nothing in it applies above 720px. The
+     script mirrors the query (narrowMQ in the ui block) for what CSS cannot place: a
+     warn/error card above the lockup, the sidebar's clearance for the lockup card, and
+     the explicit attribution collapse. */
+  @media (max-width: 720px) {
+    /* No bottom strip. A scene is an hour played at 60x, so it ends in about a minute: a
+       scrubber over that costs more to operate than it saves, and the sidebar's scene list
+       already does coarse time selection. The clock is not worth the rectangle it needs
+       either. No clock, no transport, no card, and no pause on a phone. */
+    #dial, #dialRow { display: none; }
+    /* The one exception: a warn or error still has to be seen. It is bare text, not a card:
+       the bottom edge carries one card and nothing else. It sits directly on the map, inset
+       16px from both edges and 12px above the lockup card (the script sets `bottom` from the
+       lockup's measured top), wrapping freely in the colour system's warn/error tone and
+       pinned until the failure clears. Readability over a bright trail is the accepted
+       cost. It stays beneath an open sidebar rather than printing over the list, and is
+       back as soon as the panel closes. The neutral state shows nothing. */
+    #dial[data-level="warn"], #dial[data-level="error"] {
+      display: block; left: 16px; right: 16px; max-width: none; padding: 0;
+      background: none; border: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+    #banner { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
+
+    /* Lockup: bottom-right, 16px from both edges. It is the only chrome on the map and
+       never hides. Same card as desktop (wash, hairline, padding, blur); type one step
+       down. While the sidebar is open it is not this card: see the header row below. */
+    #lockup { right: 16px; bottom: 16px; z-index: 40; }
+    #lockup .sub { display: none; }
+    /* The negative right margin is one tracking unit: it absorbs the gap letter-spacing
+       leaves after the final E, so the card carries no phantom space on its right. */
+    #lockup .title { font-size: 18px; margin-right: -.22em; }
+    #lockup .links { font-size: 13px; margin-top: 9px; }
+
+    /* Sidebar: a screen of its own. */
+    #side { width: 100%; border-right: 0; overscroll-behavior: contain; }
+    /* While it is open, the lockup is the panel's header row rather than a card floating
+       over the scene list: the script moves it inside the panel, left-aligned, facing the
+       close chip across the top. No card here, since inside the panel there is nothing to
+       read against. [Controls] stays in it, one of the four ways to close the panel. */
+    body[data-side="open"] #side { padding-top: 14px; }
+    #side #lockup { position: static; margin: 0 40px 22px 0; padding: 0;
+      background: none; border: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+    /* MapLibre's controls stand down while the sidebar covers the screen, so none of them
+       can surface over it — Tales hit this as a z-index collision only a real phone showed. */
+    body[data-side="open"] #map .maplibregl-control-container { display: none; }
+    /* The ⓘ sits 16px in from the bottom-left corner, on the lockup's baseline. */
+    .maplibregl-ctrl-bottom-left .maplibregl-ctrl { margin: 0 0 16px 16px; }
+
+    /* About: the box scrolls when the copy is taller than a small phone's screen. */
+    #aboutBox { margin: 16px; max-height: calc(100% - 32px); overflow-y: auto;
+      overscroll-behavior: contain; touch-action: pan-y; padding: 32px 24px; }
+  }
 </style>
 </head>
 <body>
@@ -357,19 +425,35 @@ const ui = (function () {
   const dial      = document.getElementById("dial");
   const playBtn   = document.getElementById("playBtn");
 
+  // Two widths the script must know, mirroring the stylesheet: at 900px and below the speed
+  // steps live in the sidebar; at 720px and below the phone layout applies. The fallback
+  // object stands in where matchMedia does not exist (check_colours.js's sandbox).
+  const mq = q => typeof matchMedia === "function"
+    ? matchMedia(q)
+    : { matches: false, addEventListener() {} };
+  const narrowMQ = mq("(max-width: 720px)");
+  const speedsMQ = mq("(max-width: 900px)");
+  const isNarrow = () => narrowMQ.matches;
+
   /* Sidebar. Four ways out: the × button, [Controls] again, Escape, and any
      pointerdown on the map. The bracket label never changes. */
   const sideOpen = () => side.dataset.open === "true";
   function openSide(open) {
     side.dataset.open = open ? "true" : "false";
-    side.inert = !open;
+    // On a phone the lockup becomes the panel's header while it is open. It moves in only
+    // once the panel is no longer inert, and out before the panel goes inert again.
+    if (open) { side.inert = false; seatLockup(); }
+    else      { seatLockup(); side.inert = true; }
     ctlLink.setAttribute("aria-expanded", String(open));
+    // Mirrored for CSS only: the phone layout hides MapLibre's controls while it is open
+    document.body.dataset.side = open ? "open" : "";
+    placeChrome();
     // Do not strand keyboard focus inside a closed dock
     if (!open && side.contains(document.activeElement)) ctlLink.focus();
   }
   ctlLink.addEventListener("click", () => openSide(!sideOpen()));
   document.getElementById("sideClose").addEventListener("click", () => openSide(false));
-  document.getElementById("map").addEventListener("pointerdown", () => openSide(false));
+  // The map pointerdown path lives with the phone tap handling below.
 
   /* About. A modal: scrim click closes, Escape closes, focus stays inside
      while it is open and returns to the opener afterwards. The strip and
@@ -423,6 +507,13 @@ const ui = (function () {
   let pinned = false;
   let fadeTimer;
   function poke() {
+    if (isNarrow()) {
+      // Phones have no strip to fade: the only thing the dial can show there is a pinned
+      // warn or error, which never hides.
+      if (fadeTimer !== undefined) { clearTimeout(fadeTimer); fadeTimer = undefined; }
+      dial.classList.remove("faded");
+      return;
+    }
     dial.classList.remove("faded");
     if (fadeTimer !== undefined) { clearTimeout(fadeTimer); fadeTimer = undefined; }
     if (!playing || pinned) return;
@@ -436,6 +527,112 @@ const ui = (function () {
   }
   dial.addEventListener("pointerleave", poke);
 
+  const lockup  = document.getElementById("lockup");
+  const speeds  = document.getElementById("speeds");
+  const dialRow = document.getElementById("dialRow");
+  const mapEl   = document.getElementById("map");
+
+  // The fourth sidebar close path, at every width: any pointerdown on the map. iOS can hand
+  // a touch that began on the sidebar to the map beneath it, iPad Safari at desktop widths
+  // included; that touch belongs to the sidebar and must not close it.
+  const within = (el, e) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && e.clientX >= r.left && e.clientX <= r.right &&
+           e.clientY >= r.top && e.clientY <= r.bottom;
+  };
+  mapEl.addEventListener("pointerdown", e => {
+    if (sideOpen() && within(side, e)) return;
+    openSide(false);
+  });
+
+  /* ---- Phone widths (≤ 720px): what CSS cannot place on its own ---- */
+  // Warn/error text sits 12px above the floating lockup card, which CSS keeps 16px from the
+  // bottom-right corner.
+  const WARN_GAP_PX = 12;
+  function placeChrome() {
+    if (!isNarrow()) return;            // desktop: init() places the strip from the attribution pill
+    if (side.contains(lockup)) return;  // the lockup is the open panel's header; keep the last position
+    const L = lockup.getBoundingClientRect();
+    if (!L.height) return;              // display:none while About is open; keep the last position
+    dial.style.bottom = Math.round(window.innerHeight - L.top + WARN_GAP_PX) + "px";
+  }
+
+  // Phones, sidebar open: the lockup is moved into the panel as its header row, right after
+  // the close chip, and returned to exactly where it was when the panel closes or the page
+  // widens. It is the same element throughout, so its handlers and focus go with it.
+  let lockupHome = null;
+  function seatLockup() {
+    const asHeader = isNarrow() && sideOpen();
+    if (asHeader === side.contains(lockup)) return;
+    const focused = lockup.contains(document.activeElement) ? document.activeElement : null;
+    if (asHeader) {
+      if (!lockupHome) {
+        lockupHome = document.createComment(" lockup's place on the map ");
+        lockup.parentNode.insertBefore(lockupHome, lockup);
+      }
+      document.getElementById("sideClose").after(lockup);
+    } else {
+      lockupHome.parentNode.insertBefore(lockup, lockupHome.nextSibling);
+    }
+    if (focused) focused.focus();   // a moved node loses focus; give it back
+  }
+
+  // The speed steps are one set of buttons, MOVED — never copied — between the dial row and
+  // a sidebar row beside Trail, at 900px. Their click handlers move with them.
+  let speedRow = null;
+  let appliedSpeeds = false, appliedNarrow = false;   // the markup ships in the desktop arrangement
+  function applyLayout() {
+    // Only a real change of arrangement moves anything. A phone fires resize whenever its
+    // toolbar collapses, and on desktop a resize must not restart the fade.
+    const speedsInSide = speedsMQ.matches;
+    if (speedsInSide !== appliedSpeeds) {
+      appliedSpeeds = speedsInSide;
+      if (speedsInSide) {
+        if (!speedRow) {
+          speedRow = document.createElement("div");
+          speedRow.className = "ctlRow";
+          speedRow.id = "speedRow";
+          speedRow.setAttribute("role", "group");
+          speedRow.setAttribute("aria-labelledby", "speedLabel");
+          const label = document.createElement("span");
+          label.className = "lbl";
+          label.id = "speedLabel";
+          label.textContent = "Speed";
+          speedRow.appendChild(label);
+        }
+        speedRow.appendChild(speeds);
+        document.getElementById("trailSlider").closest(".ctlRow").after(speedRow);
+      } else {
+        dialRow.appendChild(speeds);
+        if (speedRow) speedRow.remove();
+      }
+    }
+    const narrow = isNarrow();
+    if (narrow !== appliedNarrow) {
+      appliedNarrow = narrow;
+      // Crossing 720px hands the dial between the phone placement (above the lockup) and
+      // the desktop one (above the attribution, which init() re-measures on this mirror).
+      if (!narrow) dial.style.bottom = "";
+      document.body.dataset.narrow = narrow ? "true" : "";
+      seatLockup();
+      poke();
+    }
+    placeChrome();
+  }
+  // Both signals. The media-query events are the intended ones; resize is the fallback, so a
+  // missed or late event can never leave the layout in the wrong arrangement.
+  for (const q of [narrowMQ, speedsMQ]) {
+    if (q.addEventListener) q.addEventListener("change", applyLayout);
+    else if (q.addListener) q.addListener(applyLayout);   // Safari before 14
+  }
+  window.addEventListener("resize", applyLayout);
+  if (typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver(placeChrome);
+    ro.observe(dial);
+    ro.observe(lockup);
+  }
+  if (isNarrow() || speedsMQ.matches) applyLayout();
+
   function setPlaying(p) {
     playing = p;
     playBtn.textContent = p ? "❚❚" : "▶";
@@ -444,7 +641,7 @@ const ui = (function () {
   }
   function setPinned(p) { pinned = p; poke(); }
 
-  return { setPlaying, setPinned };
+  return { setPlaying, setPinned, isNarrow, placeChrome };
 })();
 
 /* ============================================================
@@ -656,6 +853,9 @@ function renderStatus() {
   // Only the neutral line can ellipse, so only it needs the full text as a tooltip.
   if (status.level) el.removeAttribute("title");
   else el.title = el.textContent;
+  // Mirrored for CSS: on a phone the dial exists only to carry a warn or an error
+  document.getElementById("dial").dataset.level = status.level;
+  ui.placeChrome();
   ui.setPinned(Boolean(status.level));
 }
 
@@ -965,6 +1165,8 @@ function init(data) {
   const dial = document.getElementById("dial");
   const STRIP_GAP = 8;
   function placeStrip() {
+    // Phones have no strip over the attribution; a warn/error card sits above the lockup.
+    if (ui.isNarrow()) { ui.placeChrome(); return; }
     const r = attribution.getBoundingClientRect();
     // Until the style arrives the pill is `maplibregl-attrib-empty` and display:none; a
     // zero rect must not be "measured" — leave the stylesheet's default until it shows.
@@ -972,11 +1174,17 @@ function init(data) {
   }
   placeStrip();
   new MutationObserver(placeStrip).observe(attribution, { attributes: true, attributeFilter: ["class", "open"] });
+  // Crossing 720px hands the dial between the phone and desktop placements.
+  new MutationObserver(placeStrip).observe(document.body, { attributes: true, attributeFilter: ["data-narrow"] });
   window.addEventListener("resize", placeStrip);
   // In MapLibre 4.7.1 a compact attribution starts EXPANDED: _updateCompact adds
   // `open` + `maplibregl-compact-show` synchronously inside addControl. Collapse it to the
   // ⓘ once the style has loaded — on "load", never "idle": this map may never idle.
   map.once("load", () => {
+    // Phones: make the collapse explicit rather than trusting MapLibre's own logic. It
+    // re-evaluates compactness only on add and on resize, and a phone never resizes, so a
+    // pill left full width would wrap along the bottom edge and run under the lockup.
+    if (ui.isNarrow()) attribution.classList.add("maplibregl-compact");
     attribution.classList.remove("maplibregl-compact-show");
     attribution.removeAttribute("open");
   });
