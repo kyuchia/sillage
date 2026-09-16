@@ -58,6 +58,22 @@ LAYERS = {
 
 VALID_LAYERS = tuple(LAYERS)
 
+# Positions outside greater Montréal are GPS failures, not places a vehicle went. The STM
+# feed emits null-island (0, 0) fixes, and bad fixes do not always land there, so the test
+# is a box rather than an equality check on (0, 0).
+#
+# Only the recorded layers pass through here: bus and aircraft. Metro, train and REM are
+# materialised from GTFS geometry in simulate/gtfs_sim.py, carry no GPS error, and never
+# reach this query at all.
+#
+# Derived from the measured extent recorded in docs/index.html's HOME_BOUNDS comment (bus:
+# lon -73.968 to -73.480, lat 45.403 to 45.701) and widened hard — roughly ±100 km — so it
+# throws away only the impossible. It also has to hold the aircraft layer, whose own
+# collection box (fetchers/opensky_fetcher.py BBOX: lat 45.20-45.85, lon -74.20 to -73.20)
+# sits well inside it. Widen this box rather than tighten it: a legitimate position
+# rejected here is invisible, while a bad one left in draws a streak across the map.
+PLAUSIBLE_BOX = {"min_lon": -75.0, "max_lon": -72.5, "min_lat": 44.5, "max_lat": 46.5}
+
 
 class NoDataError(Exception):
     """Raised when every requested layer came back empty.
@@ -73,9 +89,16 @@ class NoDataError(Exception):
 
 def build_where(layer, *, start=None, end=None, hours=None, route=None,
                 include_ground=False):
-    """Build the WHERE fragments + bound parameters for one layer."""
-    where = ["latitude IS NOT NULL", "longitude IS NOT NULL"]
-    params = []
+    """Build the WHERE fragments + bound parameters for one layer.
+
+    The plausibility box is applied here, in the shared query layer, so every consumer
+    inherits it: the CLI export, the live API, the baked scenes cut from that API, and
+    anything later built on the same seam. A bad fix never reaches a payload at all.
+    """
+    where = ["latitude IS NOT NULL", "longitude IS NOT NULL",
+             "longitude BETWEEN %s AND %s", "latitude BETWEEN %s AND %s"]
+    params = [PLAUSIBLE_BOX["min_lon"], PLAUSIBLE_BOX["max_lon"],
+              PLAUSIBLE_BOX["min_lat"], PLAUSIBLE_BOX["max_lat"]]
 
     if hours is not None:
         where.append("fetched_at >= NOW() - INTERVAL %s")
