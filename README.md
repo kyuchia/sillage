@@ -86,6 +86,23 @@ launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ca.sillage.stm.plist
 launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ca.sillage.opensky.plist
 ```
 
+### What was recorded
+
+Recording is closed. Both launchd agents were booted out on 2026-09-18, and the archive stands at 25,520,876 positions:
+
+| Table                 | Rows       | First fix (EDT)  | Last fix (EDT)   |
+| --------------------- | ---------- | ---------------- | ---------------- |
+| `vehicle_positions`   | 23,681,278 | 2026-04-14 22:28 | 2026-08-31 18:18 |
+| `aircraft_positions`  |  1,839,598 | 2026-04-14 23:15 | 2026-09-18 04:04 |
+
+Both tables cover one night in April and then a continuous run from 2026-08-18: buses to 08-31, aircraft to 09-18. The 125 days between April and August are a real gap, not lost data — the project was dormant and nothing was collected.
+
+Bus collection ended when the machine left Montréal. `api.stm.info` times out from where it now lives, and the STM fetcher recorded 68,140 consecutive failed polls over 15.8 days before it was stopped. Aircraft collection continued, because OpenSky is reachable from anywhere.
+
+The aircraft data has a gap of roughly two hours most evenings, around 18:00–20:00 EDT. That is the OpenSky daily credit quota running out and resetting at midnight UTC — expected behaviour, not a failure.
+
+The exact environment the recording ran under is frozen in `requirements-snapshot.txt`. Recording can be restarted from Montréal by rebuilding the virtualenv from that file and loading the archived plists in `launchd/` back into `~/Library/LaunchAgents`, as above.
+
 ### Static GTFS
 
 Fetch and archive the feeds used by the simulated modes:
@@ -133,12 +150,13 @@ Recorded positions are stored in two tables. Each includes a `GENERATED` PostGIS
 
 See [`db/schema.sql`](db/schema.sql) for the full schema.
 
-For example, buses within 500 metres of Place-des-Arts during the last hour can be grouped by route with:
+For example, buses within 500 metres of Place-des-Arts during the morning peak of 2026-08-20 can be grouped by route with:
 
 ```sql
 SELECT route_id, COUNT(DISTINCT vehicle_id)
 FROM vehicle_positions
-WHERE fetched_at > NOW() - INTERVAL '1 hour'
+WHERE fetched_at >= '2026-08-20 08:00-04:00'
+  AND fetched_at <  '2026-08-20 09:00-04:00'
   AND ST_DWithin(
         geom,
         ST_MakePoint(-73.5772, 45.5048)::geography,
