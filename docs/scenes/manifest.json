@@ -44,19 +44,6 @@
    ],
    "points": 14615,
    "mb": 0.4
-  },
-  {
-   "slug": "april-first-night",
-   "file": "april-first-night.json",
-   "label": "April 2026 - the first recorded night",
-   "start": "2026-04-14T23:15:19.795773-04:00",
-   "end": "2026-04-15T00:56:59.180925-04:00",
-   "modes": [
-    "aircraft",
-    "bus"
-   ],
-   "points": 85982,
-   "mb": 2.3
   }
  ]
 }

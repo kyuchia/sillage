@@ -1161,10 +1161,12 @@ boot()
    somewhere different each time. The box is the island with a hair of margin, and holds the
    recorded bus extent of every baked scene (lon -73.968 to -73.480, lat 45.403 to 45.701).
    Aircraft, exo and the REM's Brossard end run past it on purpose.
-   Provenance: that bus extent was measured on 2026-09-16 from the four scenes then baked in
-   docs/scenes/ (morning-peak, evening-peak, night-3am, april-first-night), ignoring a handful
-   of bad (0,0) fixes. Re-baking or adding a scene invalidates the measurement: re-measure
-   before trusting this box.
+   Provenance: that bus extent was measured on 2026-09-16, from the four scenes baked in
+   docs/scenes/ at the time, ignoring a handful of bad (0,0) fixes. The April scene has since
+   been dropped from the curated set, so the set is now morning-peak, evening-peak and
+   night-3am, and no April data reaches any baked scene; the box itself was left exactly as
+   measured. Re-baking or adding a scene invalidates the measurement: re-measure before
+   trusting this box.
    The opening camera is this same fit (frameHome() in init()), so Reset view returns to the
    framing the page first showed.
    ------------------------------------------------------------ */

@@ -28,8 +28,7 @@ bake () {
 }
 
 # August windows sit inside the reference overnight run (2026-08-19 16:00 →
-# 08-20 12:00, no gaps). The April window is the only span where the 2026-04
-# recording has bus AND aircraft together (v7 caveat), hence layer=both.
+# 08-20 12:00, no gaps).
 bake morning-peak --data-urlencode "layer=all" \
   --data-urlencode "start=2026-08-20 08:00-04:00" \
   --data-urlencode "end=2026-08-20 09:00-04:00"
@@ -42,10 +41,6 @@ bake night-3am --data-urlencode "layer=all" \
   --data-urlencode "start=2026-08-20 03:00-04:00" \
   --data-urlencode "end=2026-08-20 04:00-04:00"
 
-bake april-first-night --data-urlencode "layer=both" \
-  --data-urlencode "start=2026-04-14 23:15-04:00" \
-  --data-urlencode "end=2026-04-15 00:57-04:00"
-
 # Shrink and index: round coordinates to 5 decimals (~1.1 m, well under GPS
 # error), timestamps to 0.1 s (sampling is 20 s), then write the manifest the
 # frontend's scene picker reads.
@@ -56,9 +51,8 @@ LABELS = {
     "morning-peak":      "Morning peak - all five modes",
     "evening-peak":      "Evening peak - the crowded hour",
     "night-3am":         "03:00 - night buses",
-    "april-first-night": "April 2026 - the first recorded night",
 }
-ORDER = ["morning-peak", "evening-peak", "night-3am", "april-first-night"]
+ORDER = ["morning-peak", "evening-peak", "night-3am"]
 
 scenes = []
 for slug in ORDER:
