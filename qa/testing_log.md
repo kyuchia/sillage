@@ -32,6 +32,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F10 | `route` documented as bus-only, also filters simulated layers | low | open |
 | F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
 | F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | open |
+| F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | open |
 
 ### F1 — unparseable timestamp on a simulated layer is a 500
 
@@ -162,9 +163,37 @@ lon/lat everywhere, nothing timestamped in the future — on both tables.
 brief said; the first run reported `null_island = 0` only because of F11. All 409
 are already removed by `PLAUSIBLE_BOX` in the query layer (8b0da87).
 
-**Collection gaps**: aircraft 32 ≈ the 125-day April → August dormancy plus the
-~2 h nightly OpenSky quota reset across 08-18 → 09-18. Bus 14: _to be read from the
-gap table in the report_.
+**Collection gaps**: every gap is accounted for (F13). Bus 14 = 1 in the April
+night + the dormancy + 12 host outages. Aircraft 32 = the dormancy + 8 outages shared
+with the bus table + 15 quota-shaped evening/afternoon gaps + 4 while the machine
+travelled (08-31 → 09-01) + 4 others (08-19 start-up, 09-12/13, 09-18 before shutdown).
+
+**Time-window query** (the exact `/api/trips` query, 2026-08-20 08:00 → 09:00):
+bus 155,172 rows in **676 ms**, aircraft 1,432 rows in 11 ms. Both use the
+`fetched_at` index, then sort by (id, fetched_at) — no sequential scan. This is the
+baseline for the load tests and for F8.
+
+### F13 — the "continuous" August run has 28 missing hours, all on the host side
+
+- **Found by**: the `collection_gaps` tables in the report, cross-checked hour by hour
+  between the two tables.
+- During the bus run (08-18 23:00 → 08-31 18:00 EDT, 307 hours) **28 hours have no bus
+  data at all (9%)**: 8 on the first morning (08-19 03:00–15:00, start-up), then
+  08-22, 08-23 ×3, 08-27, 08-28 and 08-31 (2–7 h each).
+- **Every one of those hours is also empty in the aircraft table** (one 08-31 hour
+  is half-shared). The two fetchers hit different APIs on different schedules and
+  fail together only when the machine running both is asleep, offline or off — so
+  these are host outages, not STM or OpenSky problems.
+- Aircraft-only gaps: 15 one- to three-hour evening or afternoon gaps (the quota
+  shape), 4 around 08-31 → 09-01 as the machine travelled, 09-12/13 (7 h + 5 h), and
+  one before shutdown. In September the quota gap sits at 19:00 EDT, as the README
+  says; in late August it sits at 15:00 EDT on four days, which the README's
+  midnight-UTC explanation does not cover. Not investigated further.
+- A gap is only visible here if a whole clock hour is empty, so shorter outages are
+  not counted — 28 hours is a floor.
+- **Docs**: the README and v14 call the August run "continuous". It is continuous in
+  the sense of one run with no dormancy, but not hour by hour. Wording is the
+  owner's call; nothing in the README was changed.
 
 ### F11 — the null-island check used `= 0` (fixed)
 

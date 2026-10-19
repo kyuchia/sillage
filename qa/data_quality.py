@@ -113,7 +113,8 @@ HANDLING = {
     "geom_mismatch": "`geom` is a generated column; any count here is a schema problem.",
     "future_timestamps": "Not filtered.",
     "teleports": "Not filtered in SQL; the frontend's `buildSpeeds()` clamps them on screen.",
-    "collection_gaps": "Expected: the April night, the 125-day dormancy, the OpenSky quota reset.",
+    "collection_gaps": ("The 125-day dormancy and OpenSky quota resets are expected; gaps "
+                        "shared by both tables are host outages (testing log F13)."),
 }
 
 
