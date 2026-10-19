@@ -1,0 +1,5 @@
+# Test tooling, on top of requirements.txt:
+#   pip install -r requirements.txt -r requirements-dev.txt
+pytest==9.1.1
+pytest-cov==7.1.0
+httpx==0.28.1           # starlette TestClient transport (httpx2 needs idna>=3.18; requirements.txt pins 3.11)
