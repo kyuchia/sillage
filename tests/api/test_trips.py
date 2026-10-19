@@ -108,8 +108,8 @@ def test_path_is_lon_lat_order(client):
 def test_null_island_fix_never_reaches_the_payload(client):
     body = get_trips(client, layer="bus", **WINDOW)
     b4 = by_id(body)["B4"]
-    assert len(b4["path"]) == 9                       # 10 recorded, (0, 0) dropped
-    assert [0.0, 0.0] not in b4["path"]
+    assert len(b4["path"]) == 9                       # 10 recorded, null island dropped
+    assert all(abs(lon) > 1 and abs(lat) > 1 for lon, lat in b4["path"])
     assert 100 not in b4["timestamps"]                # the 08:01:40 slot is a gap now
 
 

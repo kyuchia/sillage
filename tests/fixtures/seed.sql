@@ -9,7 +9,9 @@
 -- Window B: 2026-08-20 23:55:00 → 08-21 00:05:00 EDT, crossing local midnight.
 --
 -- Planted defects (the data-quality checks must find exactly these):
---   B4  one null-island fix (0, 0)            → outside_plausible_box = 1, null_island = 1
+--   B4  one null-island fix near (0, 0)       → outside_plausible_box = 1, null_island = 1
+--       (1e-7, -1e-7), not exactly 0: the archive's 409 are like this, and an
+--       equality test on 0 missed every one of them
 --   B5  one fix with NULL latitude/longitude  → null_coords = 1
 --   B7  one repeated (vehicle_id, fetched_at) → duplicate_fixes = 1
 --   B8  one ~39 km jump inside the box        → teleports = 2 (the jump out and back)
@@ -42,8 +44,8 @@ FROM generate_series(0, 1) AS i;
 INSERT INTO vehicle_positions (fetched_at, vehicle_id, trip_id, route_id, latitude, longitude)
 SELECT TIMESTAMPTZ '2026-08-20 08:00:00-04' + i * INTERVAL '20 seconds',
        'B4', 'T80-1', '80',
-       CASE WHEN i = 5 THEN 0 ELSE 45.48 END,
-       CASE WHEN i = 5 THEN 0 ELSE -73.62 + i * 0.0005 END
+       CASE WHEN i = 5 THEN 1e-7 ELSE 45.48 END,
+       CASE WHEN i = 5 THEN -1e-7 ELSE -73.62 + i * 0.0005 END
 FROM generate_series(0, 9) AS i;
 
 -- B5, route 80: 5 fixes, the 3rd (i = 2) has no position at all

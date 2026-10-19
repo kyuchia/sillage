@@ -28,8 +28,10 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F6 | Two different answers for "nothing to draw" | decision | open |
 | F7 | Offset-less timestamps depend on the server's TimeZone | medium | open |
 | F8 | Point budget is enforced only after every row is fetched | high | open |
-| F9 | Duplicate fixes reach the payload | decision | open |
+| F9 | Duplicate fixes reach the payload | decision | kept — 0 in the archive |
 | F10 | `route` documented as bus-only, also filters simulated layers | low | open |
+| F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
+| F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | open |
 
 ### F1 — unparseable timestamp on a simulated layer is a 500
 
@@ -111,8 +113,9 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - Both copies of a repeated `(vehicle_id, fetched_at)` are returned, giving a
   zero-length, zero-duration segment. `buildSpeeds()` guards `dt > 0`, so the map shows
   a one-point speed dip rather than an error; a duplicate also counts twice toward
-  `min_points`. How often this happens in the archive is what the data-quality report
-  will say.
+  `min_points`.
+- **Kept**: the archive run found **0** duplicate fixes in either table, so there is
+  nothing to filter. The test stays as a characterisation of what would happen.
 
 ### F10 — `route` is documented as bus-only but also filters simulated layers
 
@@ -133,7 +136,78 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 planted a known number of times (null-island fix, missing position, duplicate fix,
 ~39 km jump, overnight collection gap), and asserts the exact counts.
 
-Against the real archive: _not yet run_ —
+### Run against the archive — 2026-10-20
+
+`python qa/data_quality.py` on the local `sillage` database (read-only session).
+Bus ≈ 23.7M rows, aircraft ≈ 1.84M rows; exact totals are in
+`qa/data_quality_report.md`.
+
+| Check | Bus | Aircraft | Time (bus) |
+|---|---:|---:|---:|
+| null_coords | 0 | 0 | 3.8 s |
+| null_ids | 0 | 0 | 5.5 s |
+| outside_plausible_box | **409** (≈0.0017%) | 0 | 3.4 s |
+| null_island | 0 → **409** after F11 | 0 | 2.0 s |
+| duplicate_fixes | 0 | 0 | 63 s |
+| geom_mismatch | 0 | 0 | 12 s |
+| future_timestamps | 0 | 0 | 0 s |
+| teleports | **16,262** jumps (≈0.07%) | **2,067** (≈0.11%) | 848 s |
+| collection_gaps | 14 | 32 | 2.3 s |
+
+**Clean**: no missing positions or ids, no duplicate fixes, `geom` agrees with
+lon/lat everywhere, nothing timestamped in the future — on both tables.
+
+**Implausible positions**: every one of the 409 out-of-box bus fixes rounds to
+(0.0, 0.0) — 128 vehicles, 2026-04-14 → 08-31. They are all null island, as the v14
+brief said; the first run reported `null_island = 0` only because of F11. All 409
+are already removed by `PLAUSIBLE_BOX` in the query layer (8b0da87).
+
+**Collection gaps**: aircraft 32 ≈ the 125-day April → August dormancy plus the
+~2 h nightly OpenSky quota reset across 08-18 → 09-18. Bus 14: _to be read from the
+gap table in the report_.
+
+### F11 — the null-island check used `= 0` (fixed)
+
+- **Found by**: following up the report's `outside_plausible_box = 409` with a
+  grouping query; all 409 rounded to (0.0, 0.0), yet `null_island` said 0.
+- The fixes are tiny non-zero values, not exact zeros, so `latitude = 0 AND
+  longitude = 0` matched none. The check now counts fixes within 1° of (0, 0).
+- **Why the seed missed it**: the planted null-island fix was an exact 0. It is now
+  (1e-7, −1e-7), and with the old equality check the seed test fails — so the test
+  would have caught this had the seed matched reality.
+- The query layer was never affected: it tests a box, not equality.
+
+### F12 — most bus "teleports" are stale fixes catching up, not GPS errors
+
+- **Found by**: `qa/teleport_kinds.sql`, one day (2026-08-20), 2,216 jumps over
+  150 km/h:
+
+  | Kind | Jumps | Share | Median distance | Median Δt |
+  |---|---:|---:|---:|---:|
+  | catch-up after frozen fix | 1,473 | 66% | 996 m | 20 s |
+  | one-way jump | 637 | 29% | 991 m | 20 s |
+  | spike: jump out | 49 | 2% | 2,142 m | 20 s |
+  | spike: jump back | 57 | 3% | 2,344 m | 20 s |
+
+- **Why**: `fetched_at` is the poll time, not the bus's GPS time (the feed's
+  per-vehicle timestamp is not stored; `feed_timestamp` is the feed header). When
+  the feed repeats a bus's last position for a few polls and then updates, ~1 km
+  appears to happen in 20 s. ~1 km is about three polls' worth of travel at urban
+  speed, which fits.
+- Two thirds are confirmed catch-ups (the two fixes before the jump are identical).
+  The one-way jumps have the same ~1 km profile and are probably the same thing, but
+  this query does not prove it. Only the spikes (~5%) look like real GPS errors.
+- **So**: the positions are mostly right and the timing is what is off. Deleting
+  "teleports" in SQL would throw away good positions. The map already copes —
+  `buildSpeeds()` replaces implausible segment speeds. For sonification, where
+  timing is the point, this is worth knowing before scheduling arrivals.
+- **Open**: whether to store the per-vehicle GPS timestamp if recording ever
+  restarts; whether to drop only spikes.
+- Aircraft teleports (2,067) not yet classified; OpenSky has the same poll-time
+  vs. position-time split (`state_time` is the snapshot time).
+
+Rerun:
 
     source venv/bin/activate
     python qa/data_quality.py --dsn "dbname=sillage" --out qa/data_quality_report.md
+    psql sillage < qa/teleport_kinds.sql

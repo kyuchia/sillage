@@ -62,8 +62,10 @@ CHECKS = {
         "AND latitude BETWEEN %(min_lat)s AND %(max_lat)s)",
     ),
     "null_island": (
-        "Position exactly (0, 0) — a subset of the row above",
-        "SELECT COUNT(*) FROM {table} WHERE latitude = 0 AND longitude = 0",
+        "Position within 1° of (0, 0) — a subset of the row above",
+        # Not `= 0`: the archive's null-island fixes are tiny non-zero values that
+        # round to (0.0, 0.0), and an equality test counted none of the 409.
+        "SELECT COUNT(*) FROM {table} WHERE abs(latitude) < 1 AND abs(longitude) < 1",
     ),
     "duplicate_fixes": (
         "Extra copies of the same (id, fetched_at)",
