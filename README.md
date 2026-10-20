@@ -192,6 +192,26 @@ Finally, static GTFS feeds cover limited service periods. Historical recordings 
 
 ---
 
+## Testing
+
+[![tests](https://github.com/kyuchia/sillage/actions/workflows/test.yml/badge.svg)](https://github.com/kyuchia/sillage/actions/workflows/test.yml)
+
+The suite runs against a throwaway PostGIS database built from `db/schema.sql` and a 164-row seed (`tests/fixtures/seed.sql`), never against the recorded archive. GitHub Actions runs it on every push in a `postgis/postgis` service container.
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+createdb sillage_test
+SILLAGE_TEST_DSN="dbname=sillage_test" pytest
+```
+
+- **API** (`tests/api/`): `/api/trips`, `/api/range` and `/api/health` through FastAPI's `TestClient` — the payload contract, layer and route filters, inclusive window bounds, a window across midnight, timestamps in different offsets, invalid input, the point budget, behaviour with Postgres down, recorded and simulated layers on one timeline (using a synthetic GTFS feed), and CLI/API output parity.
+- **Schema** (`tests/db/test_schema.py`): the columns, types, generated `geom` and indexes the query layer depends on.
+- **Data quality** (`qa/data_quality.py`): nine SQL checks — missing positions, positions outside the plausible box, duplicate fixes, implausible speeds between consecutive fixes (window functions over PostGIS distances), collection gaps, and others. The seed plants each defect a known number of times, and the tests assert the exact counts before the same checks are run on the archive.
+
+Findings are recorded in [`qa/testing_log.md`](qa/testing_log.md). Tests describing behaviour the code does not have yet are marked as strict expected failures and refer to the finding they belong to.
+
+---
+
 ## Data sources
 
 | Mode              | Source                                                                         | Rendering          | Terms      |

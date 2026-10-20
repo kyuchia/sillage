@@ -11,3 +11,7 @@ archive/
 gtfs/
 fetchers/logs/
 CLAUDE.md
+.pytest_cache/
+.coverage
+coverage.xml
+test-results.xml
