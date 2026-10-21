@@ -21,7 +21,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | ID | Finding | Severity | Status |
 |---|---|---|---|
 | F1 | Unparseable start/end on a simulated layer → 500 | medium | fixed |
-| F2 | NUL byte in start/end → 500 | low | open |
+| F2 | NUL byte in start/end → 500 | low | fixed |
 | F3 | start after end → 404 "no data" | low | fixed |
 | F4 | hours ≤ 0 accepted, reads as an empty future window | low | fixed |
 | F5 | 400 responses echo the generated SQL | low | open |
@@ -56,6 +56,8 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - **Found by**: `test_nul_byte_in_timestamp_is_400`.
 - psycopg2 refuses to send a string containing `\x00` and raises `ValueError`, which
   the handler's `except (psycopg2.DataError, …)` does not cover.
+- **Fixed**: the handler catches `ValueError` alongside the psycopg2 errors and answers
+  400. This also covers a NUL byte in `route`, which reaches the same query.
 
 ### F3 — start after end reports "no data"
 

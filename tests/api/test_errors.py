@@ -164,7 +164,6 @@ def test_simulated_layer_with_unparseable_timestamp_is_400(app_module, start):
     assert e.value.status_code == 400
 
 
-@finding("F2", "a NUL byte in start/end escapes as an unhandled ValueError (500)")
 def test_nul_byte_in_timestamp_is_400(client):
     from fastapi.testclient import TestClient
     with TestClient(client.app, raise_server_exceptions=False) as c:

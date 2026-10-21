@@ -293,9 +293,11 @@ def api_trips(
                         detail=f"no data for this query (empty layers: {', '.join(e.empty)})",
                     )
                 db_empty = e.empty
-            except (psycopg2.DataError, psycopg2.errors.InvalidDatetimeFormat) as e:
+            except (psycopg2.DataError, psycopg2.errors.InvalidDatetimeFormat,
+                    ValueError) as e:
                 # Almost always an unparseable start/end string; Postgres does the
-                # parsing, so this is where a bad timestamp surfaces.
+                # parsing, so this is where a bad timestamp surfaces. ValueError is
+                # psycopg2 refusing to send a string containing a NUL byte (F2).
                 raise HTTPException(status_code=400, detail=f"bad query parameter: {e}")
 
     if sim_layers:
