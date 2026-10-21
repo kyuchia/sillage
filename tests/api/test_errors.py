@@ -61,7 +61,8 @@ def test_wrongly_typed_parameter_is_422(client, params, field):
 
 @pytest.mark.parametrize("hours", ["nan", "inf"])
 def test_non_finite_hours_is_rejected(client, hours):
-    assert client.get("/api/trips", params={"hours": hours}).status_code == 400
+    # 422 since F4: rejected by validation, before Postgres sees the interval
+    assert client.get("/api/trips", params={"hours": hours}).status_code == 422
 
 
 def test_route_is_a_bound_parameter_not_sql(client, db):
@@ -177,7 +178,6 @@ def test_start_after_end_is_400(client):
     assert "before" in r.json()["detail"] or "after" in str(r.json()["detail"])
 
 
-@finding("F4", "hours <= 0 is accepted and silently reads as an empty future window")
 @pytest.mark.parametrize("hours", [0, -1, -24])
 def test_non_positive_hours_is_rejected(client, hours):
     assert client.get("/api/trips", params={"hours": hours}).status_code in (400, 422)

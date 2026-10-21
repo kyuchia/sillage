@@ -253,7 +253,8 @@ def _add_simulated(payload, sim_layers, start, end, hours, route):
 def api_trips(
     start: str | None = Query(None, description='e.g. "2026-04-14 23:15-04:00"'),
     end: str | None = Query(None),
-    hours: float | None = Query(None, description="last N hours; needs a live fetcher"),
+    hours: float | None = Query(None, gt=0, allow_inf_nan=False,
+                               description="last N hours; needs a live fetcher"),
     layer: str = Query("both", description=("bus | aircraft | metro | train | rem | both | all, "
                                         "or a comma-separated list e.g. metro,rem")),
     route: str | None = Query(None, description="filter to one route (bus layer only)"),

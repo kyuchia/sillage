@@ -23,7 +23,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F1 | Unparseable start/end on a simulated layer → 500 | medium | fixed |
 | F2 | NUL byte in start/end → 500 | low | open |
 | F3 | start after end → 404 "no data" | low | fixed |
-| F4 | hours ≤ 0 accepted, reads as an empty future window | low | open |
+| F4 | hours ≤ 0 accepted, reads as an empty future window | low | fixed |
 | F5 | 400 responses echo the generated SQL | low | open |
 | F6 | Two different answers for "nothing to draw" | decision | open |
 | F7 | Offset-less timestamps depend on the server's TimeZone | medium | open |
@@ -74,6 +74,11 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - `min_points` is declared `ge=0`; `hours` has no bound. `hours=-1` becomes
   `fetched_at >= NOW() - INTERVAL '-1 hours'`, a window in the future → 404.
   `hours=nan` / `inf` are already rejected (Postgres cannot parse the interval).
+- **Fixed**: `hours` is declared `Query(None, gt=0)`, so 0 and negative values are
+  rejected with 422 before any query, the same way an out-of-range `min_points` is.
+  `allow_inf_nan=False` is set too, so `nan` and `inf` — previously a 400 from Postgres
+  failing to parse the interval — are now also 422 from validation;
+  `test_non_finite_hours_is_rejected` expects 422 accordingly.
 
 ### F5 — error details include the SQL
 
