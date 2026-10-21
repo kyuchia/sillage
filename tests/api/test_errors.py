@@ -182,7 +182,6 @@ def test_non_positive_hours_is_rejected(client, hours):
     assert client.get("/api/trips", params={"hours": hours}).status_code in (400, 422)
 
 
-@finding("F5", "400 details echo the generated SQL back to the client")
 def test_error_detail_does_not_leak_sql(client):
     detail = client.get("/api/trips", params={"start": "notadate"}).json()["detail"]
     assert "LINE" not in detail and "BETWEEN" not in detail

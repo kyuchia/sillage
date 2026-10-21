@@ -24,7 +24,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F2 | NUL byte in start/end → 500 | low | fixed |
 | F3 | start after end → 404 "no data" | low | fixed |
 | F4 | hours ≤ 0 accepted, reads as an empty future window | low | fixed |
-| F5 | 400 responses echo the generated SQL | low | open |
+| F5 | 400 responses echo the generated SQL | low | fixed |
 | F6 | Two different answers for "nothing to draw" | decision | open |
 | F7 | Offset-less timestamps depend on the server's TimeZone | medium | open |
 | F8 | Point budget is enforced only after every row is fetched | high | open |
@@ -88,6 +88,9 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - The 400 detail is `f"bad query parameter: {e}"`, and psycopg2's message includes the
   `LINE 5: … latitude BETWEEN 44.5 AND 46.5 AND fetched_at >= 'notadate'` context.
   CORS limits the API to localhost, so this is hygiene rather than exposure.
+- **Fixed**: the 400 detail keeps only the first line of the database message, e.g.
+  `bad query parameter: invalid input syntax for type timestamp with time zone: "notadate"`.
+  The value the client sent is still named; the SQL context is not.
 
 ### F6 — "nothing to draw" has two answers
 

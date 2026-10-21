@@ -298,7 +298,10 @@ def api_trips(
                 # Almost always an unparseable start/end string; Postgres does the
                 # parsing, so this is where a bad timestamp surfaces. ValueError is
                 # psycopg2 refusing to send a string containing a NUL byte (F2).
-                raise HTTPException(status_code=400, detail=f"bad query parameter: {e}")
+                # First line only: psycopg2 appends the offending SQL ("LINE 5: …"),
+                # which is not the client's business (F5).
+                first = str(e).strip().splitlines()[0]
+                raise HTTPException(status_code=400, detail=f"bad query parameter: {first}")
 
     if sim_layers:
         payload = _add_simulated(payload, sim_layers, start, end, hours, route)
