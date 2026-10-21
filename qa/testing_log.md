@@ -22,7 +22,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 |---|---|---|---|
 | F1 | Unparseable start/end on a simulated layer → 500 | medium | fixed |
 | F2 | NUL byte in start/end → 500 | low | open |
-| F3 | start after end → 404 "no data" | low | open |
+| F3 | start after end → 404 "no data" | low | fixed |
 | F4 | hours ≤ 0 accepted, reads as an empty future window | low | open |
 | F5 | 400 responses echo the generated SQL | low | open |
 | F6 | Two different answers for "nothing to draw" | decision | open |
@@ -63,6 +63,10 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - `start=08:10&end=08:00` builds `fetched_at >= 08:10 AND fetched_at <= 08:00`, finds
   nothing, and answers `404 no data for this query`. The window is invalid, not empty;
   the simulator's own CLI already rejects it (`--end must be after --start`).
+- **Fixed**: `/api/trips` checks the order of `start` and `end` before querying and answers
+  `400 start must be before end`, for recorded and simulated layers alike. Strings
+  Python cannot parse are left for Postgres to reject as before. Equal start and end
+  are still accepted.
 
 ### F4 — non-positive `hours` is accepted
 

@@ -137,6 +137,23 @@ def _resolve_layers(layer):
     return [l for l in ALL_LAYERS if l in want]
 
 
+def _check_window_order(start, end):
+    """Reject a window whose start is after its end (F3).
+
+    Such a window is invalid, not empty, and would otherwise reach the database and
+    come back as "no data". Strings Python cannot parse are left alone here: Postgres
+    accepts more formats and reports the bad ones itself.
+    """
+    if not (start and end):
+        return
+    try:
+        lo, hi = gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
+    except SystemExit:
+        return
+    if lo > hi:
+        raise HTTPException(status_code=400, detail="start must be before end")
+
+
 # ---------------------------------------------------------------- simulated layers
 
 def _sim_window(start, end, hours):
@@ -251,6 +268,7 @@ def api_trips(
     (metro, train, rem), `both` (the two recorded layers — unchanged default), or `all`.
     """
     want = _resolve_layers(layer)
+    _check_window_order(start, end)
 
     db_layers = [l for l in want if l in DB_LAYERS]
     sim_layers = [l for l in want if l in SIM_LAYERS]

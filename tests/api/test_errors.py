@@ -171,7 +171,6 @@ def test_nul_byte_in_timestamp_is_400(client):
     assert r.status_code == 400
 
 
-@finding("F3", "start after end reports 'no data' (404) instead of rejecting the window")
 def test_start_after_end_is_400(client):
     r = client.get("/api/trips", params={"start": SEED.WINDOW_END, "end": SEED.WINDOW_START})
     assert r.status_code in (400, 422)
