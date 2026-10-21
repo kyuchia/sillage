@@ -156,7 +156,6 @@ def test_simulated_layer_without_a_full_window_is_400(client, params):
 
 # ---------------------------------------------------------------- findings
 
-@finding("F1", "an unparseable start/end on a simulated layer raises SystemExit (500)")
 @pytest.mark.parametrize("start", ["notadate", "2026-13-45"])
 def test_simulated_layer_with_unparseable_timestamp_is_400(app_module, start):
     with pytest.raises(HTTPException) as e:

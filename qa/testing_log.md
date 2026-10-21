@@ -20,7 +20,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 
 | ID | Finding | Severity | Status |
 |---|---|---|---|
-| F1 | Unparseable start/end on a simulated layer → 500 | medium | open |
+| F1 | Unparseable start/end on a simulated layer → 500 | medium | fixed |
 | F2 | NUL byte in start/end → 500 | low | open |
 | F3 | start after end → 404 "no data" | low | open |
 | F4 | hours ≤ 0 accepted, reads as an empty future window | low | open |
@@ -46,6 +46,10 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - **Same input on a recorded layer** is a correct 400, because Postgres parses it.
 - **Likely fix**: catch `SystemExit` around `_sim_window()` too and answer 400 — or
   have `parse_dt` raise `ValueError` and let the CLI turn that into an exit.
+- **Fixed**: `_sim_window()` now catches the `SystemExit` from `parse_dt` and answers
+  `400 bad query parameter: cannot parse datetime: '…'`. `parse_dt` is unchanged, so
+  the simulator CLI still exits the same way. The xfail marker is removed; the test
+  passes for both inputs.
 
 ### F2 — NUL byte in a timestamp is a 500
 

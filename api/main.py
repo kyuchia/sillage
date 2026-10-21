@@ -146,7 +146,13 @@ def _sim_window(start, end, hours):
     unbounded request has no natural answer — it is rejected rather than guessed at.
     """
     if start and end:
-        return gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
+        try:
+            return gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
+        except SystemExit as e:
+            # parse_dt is shared with the CLI, where SystemExit is the right exit;
+            # here it is a bad parameter, not a server error (F1)
+            raise HTTPException(status_code=400,
+                                detail=f"bad query parameter: {str(e).lstrip('❌ ')}")
     if hours is not None:
         now = datetime.now(gtfs_sim.TZ)
         return now - timedelta(hours=hours), now
