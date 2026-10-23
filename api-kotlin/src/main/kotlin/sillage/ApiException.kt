@@ -20,3 +20,10 @@ data class ParamProblem(
 /** Every requested layer came back empty. Carries their names for the 404 message. */
 class NoDataException(val empty: List<Layer>) :
     RuntimeException("no rows in any requested layer: ${empty.joinToString(", ") { it.key }}")
+
+/**
+ * The query matches more rows than the point budget; raised before anything is fetched
+ * (F8). Matched rows bound the payload from above, since `min_points` only drops some.
+ */
+class OverBudgetException(val budget: Int) :
+    RuntimeException("more than $budget rows match this query")

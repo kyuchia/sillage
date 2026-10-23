@@ -25,7 +25,10 @@ class SillageService(
 
         val payload = db.readOnly { conn ->
             try {
+                checkBudget(conn, layers, filters, maxPoints)
                 buildTrips(conn, layers, filters)
+            } catch (e: OverBudgetException) {
+                throw ApiException(413, overBudget(String.format(Locale.US, "more than %,d points match this query, which", e.budget)))
             } catch (e: NoDataException) {
                 throw ApiException(404, "no data for this query (empty layers: ${e.empty.joinToString(", ") { it.key }})")
             } catch (e: SQLException) {
@@ -37,22 +40,21 @@ class SillageService(
             }
         }
 
-        // Counted after fetching, as the Python service does today (F8 is still open;
-        // when it is fixed, this check and its message move in both services together).
+        // Recorded rows were checked before fetching. Kept as in the Python service, where
+        // simulated layers can still push the combined payload over; here it cannot fire.
         val totalPoints = payload.trips.sumOf { it.path.size }
         if (totalPoints > maxPoints) {
-            throw ApiException(
-                413,
-                String.format(
-                    Locale.US,
-                    "payload too large: %,d points exceeds the %,d budget. Narrow the window " +
-                        "(start/end or hours), pick a single layer, or raise MTL_MAX_POINTS.",
-                    totalPoints, maxPoints,
-                ),
-            )
+            throw ApiException(413, overBudget(String.format(Locale.US, "%,d points", totalPoints)))
         }
         return payload
     }
+
+    private fun overBudget(what: String) = String.format(
+        Locale.US,
+        "payload too large: %s exceeds the %,d budget. Narrow the window " +
+            "(start/end or hours), pick a single layer, or raise MTL_MAX_POINTS.",
+        what, maxPoints,
+    )
 
     fun range(): RangePayload = db.readOnly { conn -> getRange(conn, cachedBusiestHour(conn)) }
 

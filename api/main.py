@@ -32,7 +32,8 @@ sys.path.insert(0, str(ROOT / "export"))
 sys.path.insert(0, str(ROOT / "simulate"))
 
 from trips_query import (  # noqa: E402
-    NoDataError, VALID_LAYERS, build_trips, get_range, use_montreal_time,
+    NoDataError, OverBudgetError, VALID_LAYERS, build_trips, check_budget, get_range,
+    use_montreal_time,
 )
 import gtfs_sim  # noqa: E402
 
@@ -284,11 +285,16 @@ def api_trips(
     if db_layers:
         with db_conn() as conn:
             try:
+                check_budget(conn, db_layers, MAX_POINTS, start=start, end=end,
+                             hours=hours, route=route, include_ground=include_ground)
                 payload = build_trips(
                     conn, db_layers,
                     start=start, end=end, hours=hours, route=route,
                     min_points=min_points, include_ground=include_ground,
                 )
+            except OverBudgetError as e:
+                raise HTTPException(status_code=413, detail=_over_budget_detail(
+                    f"more than {e.budget:,} points match this query, which"))
             except NoDataError as e:
                 # Only fatal when nothing else was asked for; with simulated layers in
                 # play an empty DB window is a partial result, not a failure.
@@ -320,20 +326,22 @@ def api_trips(
             detail=f"no data for this query (empty layers: {', '.join(empty)})",
         )
 
+    # Recorded rows were checked before fetching; this still catches simulated layers,
+    # which are generated in memory, pushing the combined payload over the budget.
     total_points = sum(len(t["path"]) for t in payload["trips"])
     if total_points > MAX_POINTS:
-        raise HTTPException(
-            status_code=413,
-            detail=(
-                f"payload too large: {total_points:,} points exceeds the "
-                f"{MAX_POINTS:,} budget. Narrow the window (start/end or hours), "
-                f"pick a single layer, or raise MTL_MAX_POINTS."
-            ),
-        )
+        raise HTTPException(status_code=413,
+                            detail=_over_budget_detail(f"{total_points:,} points"))
 
     # Returned as an explicit Response so FastAPI skips jsonable_encoder — recursing a
     # 178k-point payload field by field costs more than the query itself.
     return JSONResponse(content=payload)
+
+
+def _over_budget_detail(what):
+    return (f"payload too large: {what} exceeds the {MAX_POINTS:,} budget. "
+            f"Narrow the window (start/end or hours), pick a single layer, "
+            f"or raise MTL_MAX_POINTS.")
 
 
 @app.get("/api/range")

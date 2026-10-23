@@ -51,6 +51,44 @@ fun buildWhere(layer: Layer, f: Filters): Where {
     return Where(clauses, params)
 }
 
+/**
+ * Count the rows [fetchLayer] would return, stopping at [limit]. Port of `count_rows`.
+ *
+ * The inner LIMIT lets Postgres stop as soon as the answer is known, and there is no
+ * ORDER BY forcing a sort of everything first.
+ */
+fun countRows(conn: Connection, layer: Layer, f: Filters, limit: Int): Int {
+    val where = buildWhere(layer, f)
+    val sql = """
+        SELECT count(*) FROM (
+            SELECT 1 FROM ${layer.table}
+            WHERE ${where.clauses.joinToString(" AND ")}
+            LIMIT ?
+        ) AS probe
+    """.trimIndent()
+
+    conn.prepareStatement(sql).use { ps ->
+        where.params.forEachIndexed { i, value -> ps.setObject(i + 1, value) }
+        ps.setInt(where.params.size + 1, limit)
+        ps.executeQuery().use { rs ->
+            rs.next()
+            return rs.getInt(1)
+        }
+    }
+}
+
+/**
+ * Throw [OverBudgetException] if all layers together match more than [maxRows] rows,
+ * before anything is fetched (F8). Port of `check_budget`.
+ */
+fun checkBudget(conn: Connection, layers: List<Layer>, f: Filters, maxRows: Int) {
+    var used = 0
+    for (layer in layers) {
+        used += countRows(conn, layer, f, maxRows - used + 1)
+        if (used > maxRows) throw OverBudgetException(maxRows)
+    }
+}
+
 /** One position row, as `fetch_layer` returns it. */
 data class Fix(
     val fetchedAt: Instant,

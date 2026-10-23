@@ -27,12 +27,13 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F5 | 400 responses echo the generated SQL | low | fixed |
 | F6 | Two different answers for "nothing to draw" | decision | open |
 | F7 | Offset-less timestamps depend on the server's TimeZone | medium | fixed |
-| F8 | Point budget is enforced only after every row is fetched | high | open |
+| F8 | Point budget is enforced only after every row is fetched | high | fixed |
 | F9 | Duplicate fixes reach the payload | decision | kept — 0 in the archive |
 | F10 | `route` documented as bus-only, also filters simulated layers | low | fixed |
 | F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
 | F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | open |
 | F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | open |
+| F14 | More than 8 concurrent requests → 500 "connection pool exhausted" (Python) | high | open |
 
 ### F1 — unparseable timestamp on a simulated layer is a 500
 
@@ -132,8 +133,23 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
   `build_trips` has assembled them. On the seed the test fetched 116 rows to refuse a
   10-point budget; against the archive, `/api/trips?layer=bus` with no window would
   pull ~23.7M rows into Python before answering 413.
-- **Next**: measure it with k6 against the real database before choosing a fix
-  (e.g. a `COUNT(*)` or `LIMIT MAX_POINTS + 1` probe before the real query).
+- **Fixed** in both services: before the real query, `check_budget()` /
+  `checkBudget()` counts each layer's matching rows with
+  `SELECT count(*) FROM (SELECT 1 … LIMIT remaining + 1)`. The inner LIMIT lets
+  Postgres stop as soon as the budget is exceeded, and without an ORDER BY nothing is
+  sorted first. Over budget → 413 before a single row is fetched.
+- **Behaviour change**: the budget now counts rows the query matches, before
+  `min_points` drops short traces — the rows that would actually be held in memory.
+  The 413 message reads "more than N points match this query". A request whose
+  matched rows fit but whose simulated layers push it over is still caught by the
+  original after-the-fact count (`test_simulated_points_can_still_push_the_payload_over_the_budget`).
+- The strict xfail now passes; `test_payload_exactly_at_the_budget_is_allowed` moved
+  its boundary from 119 kept points to 121 matched rows. Kotlin: `PointBudgetTest`,
+  `PointBudgetBoundaryTest`.
+- **Measured** (k6, 1-day bus window, 10 requests, see "Load tests" below): the 413
+  went from p50 **30.04 s → 84 ms** in Python and **9.62 s → 94 ms** in Kotlin. The
+  probe costs in-budget requests little: the 1-hour window moved 1.89 → 1.93 s
+  (Python) and 636 → 681 ms (Kotlin).
 
 ### F9 — duplicate fixes reach the payload
 
@@ -155,6 +171,77 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
   only `bus` as the empty layer.
 - Filtering metro by route may well be wanted (`--route` exists on the simulator CLI);
   the mismatch is between the description and the behaviour.
+
+---
+
+### F14 — the Python service answers 500 once more than 8 requests overlap
+
+- **Found by**: the k6 `concurrency` scenario (`load/trips.js`), first dry run on the
+  seed: 10 VUs → 14% of requests 500, 50 VUs → 59%, 100 VUs → 60%.
+- **Cause**: `db_conn()` borrows from psycopg2's `ThreadedConnectionPool(maxconn=8)`,
+  which raises `PoolError("connection pool exhausted")` instead of waiting. FastAPI runs
+  the sync handler on a 40-thread pool, so the 9th overlapping request fails at once.
+- **On the archive** (k6, 1-hour bus window, 60 s per stage): **95–98% of requests
+  fail with 500** at 10, 50 and 100 VUs. A refused request returns in ~3 ms and its
+  VU retries at once, so failures dominate the count; only 0.7–1.1 successful
+  responses per second get through, against 0.53/s for one VU on its own.
+- The Kotlin service's Hikari pool (also 8) queues instead: **0 errors** at 10 and
+  100 VUs (5 × 503 at 50 VUs in one run, its 3 s `connectionTimeout`), ~7–8 req/s
+  at every level, and latency growing with the queue (p50 1.3 s → 11–13 s).
+- **Next**: decide with the owner. A fix would make `db_conn()` wait for a free
+  connection (a semaphore of 8 around `getconn`, with a timeout → 503), so both
+  services behave the same way under load.
+
+---
+
+## 2026-10-23 — load tests (k6) against the archive
+
+`load/bench.sh before` on `fe0990e` (scripts only), `load/bench.sh after` on `e19d85e`
+(F8 fixed); `python load/compare.py before after`. Owner's MacBook Pro (Apple silicon),
+local Postgres with the 25.5M-row `sillage` archive, both services and k6 2.3.0 on the
+same machine, `MTL_MAX_POINTS` 400,000, both pools 8 connections. Summaries are in
+`load/results/`.
+
+**Window size** — 1 VU, bus layer from 2026-08-20 08:00 EDT, 2 warm-up + 10 measured
+requests each. The 1-day window matches more than 400,000 rows, so it is a 413.
+
+| Service | Window | p50 before | p95 before | p50 after | p95 after | Status |
+|---|---|---:|---:|---:|---:|---|
+| Python | 1 min | 39 ms | 54 ms | 51 ms | 65 ms | 200 |
+| Python | 10 min | 315 ms | 331 ms | 359 ms | 572 ms | 200 |
+| Python | 1 h | 1.89 s | 2.06 s | 1.93 s | 2.10 s | 200 |
+| Python | 1 day | **30.04 s** | 42.41 s | **84 ms** | 93 ms | 413 |
+| Kotlin | 1 min | 20 ms | 39 ms | 20 ms | 34 ms | 200 |
+| Kotlin | 10 min | 105 ms | 111 ms | 109 ms | 113 ms | 200 |
+| Kotlin | 1 h | 636 ms | 682 ms | 681 ms | 698 ms | 200 |
+| Kotlin | 1 day | **9.62 s** | 10.16 s | **94 ms** | 96 ms | 413 |
+
+**Concurrency** — the 1-hour window, 60 s at each level. "Errors" are responses other
+than 200/413.
+
+| Service | VUs | p50 before | p95 before | req/s before | errors before | p50 after | p95 after | req/s after | errors after |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Python | 10 | 3 ms | 3.77 s | 16.2 | 95.5% | 3 ms | 2.86 s | 18.9 | 96.2% |
+| Python | 50 | 93 ms | 48.53 s | 8.0 | 87.2% | 69 ms | 24.57 s | 22.0 | 95.1% |
+| Python | 100 | 165 ms | 24.78 s | 32.6 | 96.2% | 151 ms | 11.81 s | 43.7 | 98.2% |
+| Kotlin | 10 | 1.34 s | 1.86 s | 7.3 | 0.0% | 1.38 s | 1.71 s | 7.2 | 0.0% |
+| Kotlin | 50 | 7.48 s | 13.39 s | 7.1 | 1.2% | 6.59 s | 11.10 s | 7.8 | 0.0% |
+| Kotlin | 100 | 13.07 s | 36.54 s | 7.2 | 0.0% | 11.13 s | 34.77 s | 8.1 | 0.0% |
+
+**Reading it**
+
+- **F8**: refusing an over-budget request is now ~360× faster in Python and ~100× in
+  Kotlin, and no longer scales with the size of the request. In-budget windows are
+  unchanged within noise.
+- **Python vs Kotlin, one request**: Kotlin is ~2–3× faster at every window size
+  (1 h: 636 ms vs 1.89 s). The SQL alone takes ~676 ms (above), so Kotlin's time is
+  almost all query, while Python spends ~1.2 s building and serialising 155k points.
+- **Under load**: Python's numbers are dominated by F14 — its p50 of 3 ms is the
+  pool refusing. Kotlin serves everything but its throughput is flat at ~7–8 req/s
+  from 10 VUs up, so added users only add queueing (p50 ≈ VUs ÷ throughput, as
+  Little's law predicts). A 1-hour window is a heavy request: ~155k points each.
+- The req/s and errors in the Python rows count the fast 500s; they are not useful
+  throughput.
 
 ---
 

@@ -75,6 +75,19 @@ VALID_LAYERS = tuple(LAYERS)
 PLAUSIBLE_BOX = {"min_lon": -75.0, "max_lon": -72.5, "min_lat": 44.5, "max_lat": 46.5}
 
 
+class OverBudgetError(Exception):
+    """Raised before any rows are fetched when the query matches more than the budget.
+
+    The budget is checked against rows the query matches, which is what has to be
+    fetched and held in memory, so it is an upper bound on the points in the payload
+    (`min_points` can only drop some of them).
+    """
+
+    def __init__(self, budget):
+        self.budget = budget
+        super().__init__(f"more than {budget:,} rows match this query")
+
+
 class NoDataError(Exception):
     """Raised when every requested layer came back empty.
 
@@ -154,6 +167,40 @@ def fetch_layer(conn, layer, **filters):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, params)
         return cur.fetchall()
+
+
+def count_rows(conn, layer, limit, **filters):
+    """Count the rows `fetch_layer` would return, stopping at `limit`.
+
+    The inner LIMIT lets Postgres stop scanning as soon as the answer is known, and
+    there is no ORDER BY to force a sort of everything first, so an unbounded window
+    costs about as much as a window that just fills the budget.
+    """
+    cfg = LAYERS[layer]
+    where, params = build_where(layer, **filters)
+    query = f"""
+        SELECT count(*) FROM (
+            SELECT 1 FROM {cfg['table']}
+            WHERE {' AND '.join(where)}
+            LIMIT %s
+        ) AS probe
+    """
+    with conn.cursor() as cur:
+        cur.execute(query, params + [limit])
+        return cur.fetchone()[0]
+
+
+def check_budget(conn, layers, max_rows, **filters):
+    """Raise OverBudgetError if all layers together match more than `max_rows` rows (F8).
+
+    Runs before anything is fetched: an over-budget request used to pull every row into
+    memory and assemble the trips only to be refused afterwards.
+    """
+    used = 0
+    for layer in layers:
+        used += count_rows(conn, layer, max_rows - used + 1, **filters)
+        if used > max_rows:
+            raise OverBudgetError(max_rows)
 
 
 def build_trips_with_summary(conn, layers, *, start=None, end=None, hours=None,

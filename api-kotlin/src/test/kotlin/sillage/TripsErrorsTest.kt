@@ -99,23 +99,42 @@ class TripsErrorsTest : ApiTestBase() {
     }
 }
 
-/** The point budget, with MTL_MAX_POINTS one below what the seed window holds (119). */
+/**
+ * The point budget (F8): checked against rows the query matches, before anything is
+ * fetched. The seed window matches 121 rows (119 kept points + the 2-point short trip).
+ */
 @MicronautTest
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PointBudgetTest : ApiTestBase() {
 
-    override fun extraProperties() = mapOf("sillage.max-points" to "118")
+    override fun extraProperties() = mapOf("sillage.max-points" to "120")
 
     @Test
-    fun `payload over the point budget is 413`() {
+    fun `a query matching more rows than the budget is 413`() {
         val r = get("/api/trips", Seed.WINDOW)
         assertEquals(413, r.status)
-        assertTrue(r.detail.startsWith("payload too large: 119 points exceeds the 118 budget."), r.detail)
+        assertTrue(
+            r.detail.startsWith("payload too large: more than 120 points match this query, which exceeds the 120 budget."),
+            r.detail,
+        )
         assertTrue("Narrow the window" in r.detail)
     }
 
     @Test
     fun `a smaller window under the budget is allowed`() {
-        assertEquals(200, get("/api/trips", Seed.WINDOW + ("layer" to "bus")).status)   // 83 points
+        assertEquals(200, get("/api/trips", Seed.WINDOW + ("layer" to "bus")).status)   // 85 rows
+    }
+}
+
+/** Exactly at the budget: every matched row fits, so the request is served. */
+@MicronautTest
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class PointBudgetBoundaryTest : ApiTestBase() {
+
+    override fun extraProperties() = mapOf("sillage.max-points" to "121")
+
+    @Test
+    fun `a query matching exactly the budget is allowed`() {
+        assertEquals(200, get("/api/trips", Seed.WINDOW).status)
     }
 }
