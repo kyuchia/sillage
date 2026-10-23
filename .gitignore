@@ -15,3 +15,6 @@ CLAUDE.md
 .coverage
 coverage.xml
 test-results.xml
+
+# k6 server logs from load/bench.sh
+load/logs/

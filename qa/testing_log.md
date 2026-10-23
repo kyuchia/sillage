@@ -33,6 +33,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
 | F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | open |
 | F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | open |
+| F14 | More than 8 concurrent requests → 500 "connection pool exhausted" (Python) | high | open |
 
 ### F1 — unparseable timestamp on a simulated layer is a 500
 
@@ -155,6 +156,21 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
   only `bus` as the empty layer.
 - Filtering metro by route may well be wanted (`--route` exists on the simulator CLI);
   the mismatch is between the description and the behaviour.
+
+---
+
+### F14 — the Python service answers 500 once more than 8 requests overlap
+
+- **Found by**: the k6 `concurrency` scenario (`load/trips.js`), first dry run on the
+  seed: 10 VUs → 14% of requests 500, 50 VUs → 59%, 100 VUs → 60%.
+- **Cause**: `db_conn()` borrows from psycopg2's `ThreadedConnectionPool(maxconn=8)`,
+  which raises `PoolError("connection pool exhausted")` instead of waiting. FastAPI runs
+  the sync handler on a 40-thread pool, so the 9th overlapping request fails at once.
+- The Kotlin service's Hikari pool (also 8) queues instead, failing only after its
+  3 s `connectionTimeout`. Its behaviour under load is measured on the archive.
+- **Next**: decide with the owner. A fix would make `db_conn()` wait for a free
+  connection (a semaphore of 8 around `getconn`, with a timeout → 503), so both
+  services behave the same way under load.
 
 ---
 
