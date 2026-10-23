@@ -21,6 +21,10 @@ dependencies {
     implementation("org.postgresql:postgresql:42.7.4")
     runtimeOnly("ch.qos.logback:logback-classic")
     runtimeOnly("org.yaml:snakeyaml")
+
+    // @ParameterizedTest / @ValueSource / @CsvSource; testRuntime("junit5") below brings
+    // only the Jupiter API and engine. Version comes from the Micronaut BOM.
+    testImplementation("org.junit.jupiter:junit-jupiter-params")
 }
 
 application {
