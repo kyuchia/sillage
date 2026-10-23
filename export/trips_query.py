@@ -87,6 +87,22 @@ class NoDataError(Exception):
         super().__init__(f"no rows in any requested layer: {', '.join(self.empty)}")
 
 
+# The recording, the GTFS schedules and the simulator all live in Montréal time. An
+# offset-less start/end ("2026-08-20 08:00") must mean the same instant whatever the
+# server's TimeZone is, and on both the recorded and the simulated side (F7).
+SESSION_TZ = "America/Montreal"
+
+
+def use_montreal_time(conn):
+    """Make offset-less timestamps, and the offsets in the output, Montréal time.
+
+    SET LOCAL lasts until the transaction ends: callers run their queries in the same
+    transaction (the API rolls back on the way out), so no connection is left changed.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SET LOCAL TIME ZONE %s", (SESSION_TZ,))
+
+
 def build_where(layer, *, start=None, end=None, hours=None, route=None,
                 include_ground=False):
     """Build the WHERE fragments + bound parameters for one layer.

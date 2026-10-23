@@ -25,7 +25,9 @@ import psycopg2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from trips_query import NoDataError, VALID_LAYERS, build_trips_with_summary
+from trips_query import (
+    NoDataError, VALID_LAYERS, build_trips_with_summary, use_montreal_time,
+)
 
 PG_DSN = os.environ.get("PG_DSN", "dbname=sillage")
 
@@ -49,6 +51,7 @@ def main():
 
     conn = psycopg2.connect(PG_DSN)
     try:
+        use_montreal_time(conn)
         output, summary = build_trips_with_summary(
             conn, layers,
             start=args.start,
