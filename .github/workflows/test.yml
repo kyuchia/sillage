@@ -56,3 +56,61 @@ jobs:
           path: |
             test-results.xml
             coverage.xml
+
+  # The Kotlin port (api-kotlin/): its own tests, then a parity check against the
+  # FastAPI service, both servers reading the same seeded database.
+  kotlin:
+    runs-on: ubuntu-latest
+
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sillage_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SILLAGE_TEST_DSN: host=localhost port=5432 user=postgres password=postgres dbname=sillage_test
+      PG_DSN: host=localhost port=5432 user=postgres password=postgres dbname=sillage_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The tests load db/schema.sql and tests/fixtures/seed.sql, which the parity
+      # step below then reads.
+      - name: Run Kotlin tests and build the server
+        working-directory: api-kotlin
+        run: ./gradlew test installDist
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install the FastAPI service
+        run: pip install -r requirements.txt
+
+      - name: Parity with the FastAPI service
+        run: python scripts/parity_kotlin.py --launch
+
+      - name: Upload Kotlin test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-test-results
+          path: api-kotlin/build/test-results/test/*.xml
