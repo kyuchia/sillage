@@ -4,6 +4,7 @@ import java.net.URI
 import java.net.URLDecoder
 import java.sql.Connection
 import java.sql.SQLException
+import java.sql.SQLTransientConnectionException
 import java.util.Properties
 
 /**
@@ -22,11 +23,25 @@ fun interface ConnectionSource {
  * transaction is rolled back on the way out either way, and `SET LOCAL` (F7) therefore
  * ends with it — a pooled connection is never left in a changed time zone.
  */
-class Database(private val source: ConnectionSource, private val dsnLabel: String) {
+/** How long a request waits for a free pooled connection; Hikari's connectionTimeout. */
+const val POOL_WAIT_MILLIS = 3_000L
+
+class Database(
+    private val source: ConnectionSource,
+    private val dsnLabel: String,
+    private val poolWaitMillis: Long = POOL_WAIT_MILLIS,
+) {
 
     fun <T> readOnly(block: (Connection) -> T): T {
         val conn = try {
             source.open()
+        } catch (e: SQLTransientConnectionException) {
+            // Hikari's timeout. With no cause, every connection was simply in use: the
+            // database is fine, just busy (F14). With a cause, connecting itself failed.
+            if (e.cause != null) {
+                throw ApiException(503, "cannot connect to PostgreSQL ($dsnLabel): ${e.message}")
+            }
+            throw ApiException(503, "database busy: no connection became free within ${seconds(poolWaitMillis)} s. Try again shortly.")
         } catch (e: SQLException) {
             throw ApiException(503, "cannot connect to PostgreSQL ($dsnLabel): ${e.message}")
         }
@@ -41,6 +56,10 @@ class Database(private val source: ConnectionSource, private val dsnLabel: Strin
         }
     }
 }
+
+/** Seconds the way Python's `{:g}` writes them: 3000 → "3", 100 → "0.1". */
+internal fun seconds(millis: Long): String =
+    if (millis % 1000 == 0L) (millis / 1000).toString() else (millis / 1000.0).toString()
 
 /** A JDBC URL plus the properties the driver needs (user, password, options …). */
 data class JdbcTarget(val url: String, val properties: Properties)

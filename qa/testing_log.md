@@ -33,7 +33,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
 | F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | open |
 | F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | open |
-| F14 | More than 8 concurrent requests → 500 "connection pool exhausted" (Python) | high | open |
+| F14 | More than 8 concurrent requests → 500 "connection pool exhausted" (Python) | high | fixed |
 
 ### F1 — unparseable timestamp on a simulated layer is a 500
 
@@ -188,9 +188,19 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - The Kotlin service's Hikari pool (also 8) queues instead: **0 errors** at 10 and
   100 VUs (5 × 503 at 50 VUs in one run, its 3 s `connectionTimeout`), ~7–8 req/s
   at every level, and latency growing with the queue (p50 1.3 s → 11–13 s).
-- **Next**: decide with the owner. A fix would make `db_conn()` wait for a free
-  connection (a semaphore of 8 around `getconn`, with a timeout → 503), so both
-  services behave the same way under load.
+- **Fixed**: `db_conn()` now takes one of 8 slots (`threading.BoundedSemaphore`, one
+  per pooled connection) before `getconn()`, waiting up to `MTL_POOL_WAIT_SEC`
+  (default 3 s, Hikari's `connectionTimeout` in Kotlin). A request that cannot get one
+  in time is a **503 "database busy: no connection became free within 3 s. Try again
+  shortly."** — a temporary condition a client may retry, not a server fault.
+- Kotlin said "cannot connect to PostgreSQL" for the same situation. A Hikari timeout
+  with no cause (every connection in use) now gives the same "database busy" 503;
+  one caused by a failed connect keeps "cannot connect".
+- Tests: `test_requests_beyond_the_pool_wait_for_a_free_connection`,
+  `test_a_request_that_waits_too_long_is_503_not_500`; Kotlin `PoolBusyTest`. On the
+  seed, k6 at 10/50/100 VUs went from 14–60% errors to none.
+- **Measured on the archive**: pending (`SERVICES=python SCENARIOS=concurrency
+  load/bench.sh f14`).
 
 ---
 

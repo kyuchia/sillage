@@ -15,6 +15,7 @@ retires the old "you must start the server from the project root" trap.
 
 import os
 import sys
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -53,6 +54,11 @@ PG_DSN = os.environ.get("PG_DSN", "dbname=sillage")
 # writing a huge file to disk is a legitimate thing to want.
 MAX_POINTS = int(os.environ.get("MTL_MAX_POINTS", 400_000))
 
+# Requests wait this long for a free database connection before a 503 (F14). The same
+# 3 s as the Kotlin service's Hikari connectionTimeout, so both behave alike under load.
+POOL_SIZE = 8
+POOL_WAIT_SEC = float(os.environ.get("MTL_POOL_WAIT_SEC", 3))
+
 app = FastAPI(title="Sillage API", version="1.0")
 
 # A one-hour peak window is ~178k points; the JSON compresses roughly 5-10x, which is
@@ -73,11 +79,16 @@ app.add_middleware(
 # Built lazily so the app still boots (and still serves web/) when Postgres is down.
 _POOL = None
 
+# psycopg2's pool raises PoolError the moment all its connections are out, and FastAPI
+# runs this sync code on ~40 threads, so a 9th overlapping request used to be a 500
+# (F14). One slot per connection makes the extra requests queue instead.
+_SLOTS = threading.BoundedSemaphore(POOL_SIZE)
+
 
 def _get_pool():
     global _POOL
     if _POOL is None:
-        _POOL = pgpool.ThreadedConnectionPool(minconn=1, maxconn=8, dsn=PG_DSN)
+        _POOL = pgpool.ThreadedConnectionPool(minconn=1, maxconn=POOL_SIZE, dsn=PG_DSN)
     return _POOL
 
 
@@ -95,16 +106,25 @@ def db_conn():
         raise HTTPException(status_code=503,
                             detail=f"cannot connect to PostgreSQL ({PG_DSN}): {e}")
 
-    conn = pool.getconn()
+    if not _SLOTS.acquire(timeout=POOL_WAIT_SEC):
+        raise HTTPException(
+            status_code=503,
+            detail=(f"database busy: no connection became free within "
+                    f"{POOL_WAIT_SEC:g} s. Try again shortly."),
+        )
     try:
-        use_montreal_time(conn)
-        yield conn
-        conn.rollback()
-    except Exception:
-        conn.rollback()
-        raise
+        conn = pool.getconn()
+        try:
+            use_montreal_time(conn)
+            yield conn
+            conn.rollback()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            pool.putconn(conn)
     finally:
-        pool.putconn(conn)
+        _SLOTS.release()
 
 
 # ---------------------------------------------------------------- layer parsing
