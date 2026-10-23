@@ -257,7 +257,9 @@ def api_trips(
                                description="last N hours; needs a live fetcher"),
     layer: str = Query("both", description=("bus | aircraft | metro | train | rem | both | all, "
                                         "or a comma-separated list e.g. metro,rem")),
-    route: str | None = Query(None, description="filter to one route (bus layer only)"),
+    route: str | None = Query(None, description=(
+        "filter to one route: the bus route number, or the GTFS route_id on "
+        "metro, train and rem. Aircraft ignore it.")),
     # ge=0 rather than ge=1 so the CLI's `--min-points 0` has an exact HTTP equivalent;
     # 0 and 1 both keep everything, since a trace group is never empty.
     min_points: int = Query(3, ge=0, description="drop traces shorter than this"),
@@ -307,9 +309,12 @@ def api_trips(
         payload = _add_simulated(payload, sim_layers, start, end, hours, route)
 
     if payload is None:
+        # Nothing came back from any layer: name the recorded ones the database found
+        # empty and every simulated one, since `route` filters those too (F10).
+        empty = db_empty + sim_layers
         raise HTTPException(
             status_code=404,
-            detail=f"no data for this query (empty layers: {', '.join(db_empty or want)})",
+            detail=f"no data for this query (empty layers: {', '.join(empty)})",
         )
 
     total_points = sum(len(t["path"]) for t in payload["trips"])

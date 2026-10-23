@@ -62,11 +62,18 @@ def test_simulated_layer_rescues_an_empty_recorded_window(client, synthetic_metr
 
 
 def test_route_filter_also_applies_to_simulated_layers(client, synthetic_metro):
-    # Characterisation, see F10: documented as "bus layer only", but it reaches the
-    # simulator too, and the 404 then names only the recorded layer as empty.
+    # F10: `route` filters simulated layers as well as the bus layer, and the 404
+    # names every layer it emptied.
     r = client.get("/api/trips", params={"layer": "bus,metro", "route": "nope", **WINDOW})
     assert r.status_code == 404
-    assert r.json()["detail"].endswith("(empty layers: bus)")
+    assert r.json()["detail"].endswith("(empty layers: bus, metro)")
+
+
+def test_route_description_names_the_simulated_layers(client):
+    params = client.get("/openapi.json").json()["paths"]["/api/trips"]["get"]["parameters"]
+    desc = next(p for p in params if p["name"] == "route")["description"]
+    assert "bus layer only" not in desc
+    assert all(mode in desc for mode in ("metro", "train", "rem"))
 
 
 def test_all_layers_with_missing_train_and_rem_feeds_is_503(client, synthetic_metro):

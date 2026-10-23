@@ -29,7 +29,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F7 | Offset-less timestamps depend on the server's TimeZone | medium | open |
 | F8 | Point budget is enforced only after every row is fetched | high | open |
 | F9 | Duplicate fixes reach the payload | decision | kept — 0 in the archive |
-| F10 | `route` documented as bus-only, also filters simulated layers | low | open |
+| F10 | `route` documented as bus-only, also filters simulated layers | low | fixed |
 | F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
 | F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | open |
 | F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | open |
@@ -154,6 +154,13 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 `tests/db/test_quality_checks.py` runs them against the seed, where each defect is
 planted a known number of times (null-island fix, missing position, duplicate fix,
 ~39 km jump, overnight collection gap), and asserts the exact counts.
+- **Fixed**: the behaviour was kept — filtering a simulated layer by route_id is useful,
+  and the simulator CLI already offers `--route`. The description now reads "the bus
+  route number, or the GTFS route_id on metro, train and rem. Aircraft ignore it."
+  The 404 for a query that empties every layer now names the simulated layers too
+  (`empty layers: bus, metro`). `test_route_description_names_the_simulated_layers`
+  checks the OpenAPI description. `export_trips.py` keeps "bus layer only": the CLI has
+  no simulated layers.
 
 ### Run against the archive — 2026-10-20
 
