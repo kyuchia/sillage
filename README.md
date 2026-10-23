@@ -29,6 +29,7 @@ Because positions are stored rather than only streamed, any collected period can
 | Ingestion  | Python, `gtfs-realtime-bindings`, `opensky-api`                   |
 | Storage    | PostgreSQL 17, PostGIS 3.6                                        |
 | API        | FastAPI, uvicorn                                                  |
+| API (port) | Kotlin, Micronaut 4, HikariCP — recorded layers, see below        |
 | Simulation | Static GTFS interpolation using `shapes.txt` and `stop_times.txt` |
 | Map        | MapLibre GL JS                                                    |
 | Layers     | deck.gl `TripsLayer` and `ScatterplotLayer`                       |
@@ -209,6 +210,38 @@ SILLAGE_TEST_DSN="dbname=sillage_test" pytest
 - **Data quality** (`qa/data_quality.py`): nine SQL checks — missing positions, positions outside the plausible box, duplicate fixes, implausible speeds between consecutive fixes (window functions over PostGIS distances), collection gaps, and others. The seed plants each defect a known number of times, and the tests assert the exact counts before the same checks are run on the archive.
 
 Findings are recorded in [`qa/testing_log.md`](qa/testing_log.md). Tests describing behaviour the code does not have yet are marked as strict expected failures and refer to the finding they belong to.
+
+---
+
+## Kotlin port (`api-kotlin/`)
+
+A second implementation of the API's database side in Kotlin with Micronaut, reading the same PostGIS tables and answering with the same JSON. It exists to show the query contract holds outside Python: one specification, two services, and a test that proves they agree.
+
+**Scope.** `/api/health`, `/api/range` and `/api/trips` for the recorded layers: `bus`, `aircraft`, `both`. The GTFS schedule simulation (`metro`, `train`, `rem`, `all`) stays in Python; the port answers those with a 400 that says so rather than returning a partial result.
+
+```bash
+cd api-kotlin
+PG_DSN="dbname=sillage" ./gradlew run        # http://localhost:8081/api/health
+SILLAGE_TEST_DSN="dbname=sillage_test" ./gradlew test
+```
+
+It reads the same `PG_DSN` (libpq format) and `MTL_MAX_POINTS` as the Python service, and needs JDK 21.
+
+**Parity test.** `scripts/parity_kotlin.py` sends the same 55 requests to both servers and compares them: whole JSON bodies for every 200, status and `detail` for 400 and 404, and each problem's location and type for 422. The cases cover every layer spelling, the filters, windows across midnight and in other offsets, offset-less times on a server in another time zone, and the invalid-input cases from `tests/api/test_errors.py`. CI runs it after the Kotlin tests, against the seeded database.
+
+```bash
+(cd api-kotlin && ./gradlew installDist)
+PG_DSN="dbname=sillage_test" python scripts/parity_kotlin.py --launch          # seed
+PG_DSN="dbname=sillage" python scripts/parity_kotlin.py --launch --real        # archive
+```
+
+**How it is built.** `SillageService` holds the logic and knows nothing about HTTP; the controller only binds parameters and writes JSON. Table and column names come from a fixed `Layer` enum and every request value is a bound `?` parameter. Parameters are validated by hand so the accepted spellings and statuses match FastAPI's (422 for a bad `hours`, `min_points` or `include_ground`). The JDBC driver returns timestamps in UTC, so the port formats them in Montréal time the way Python's `isoformat()` does, and sets the session time zone per request exactly as the Python service does (F7).
+
+**Known differences.**
+- Simulated layers: 400 instead of a payload.
+- A NUL byte in a parameter: both answer 400, with the driver's own wording.
+- The `start > end` check parses the common ISO-8601 forms; anything else goes to Postgres, as in Python.
+- No static page: the port serves `/api/*` only.
 
 ---
 
