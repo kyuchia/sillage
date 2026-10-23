@@ -20,11 +20,11 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 
 | ID | Finding | Severity | Status |
 |---|---|---|---|
-| F1 | Unparseable start/end on a simulated layer → 500 | medium | open |
-| F2 | NUL byte in start/end → 500 | low | open |
-| F3 | start after end → 404 "no data" | low | open |
-| F4 | hours ≤ 0 accepted, reads as an empty future window | low | open |
-| F5 | 400 responses echo the generated SQL | low | open |
+| F1 | Unparseable start/end on a simulated layer → 500 | medium | fixed |
+| F2 | NUL byte in start/end → 500 | low | fixed |
+| F3 | start after end → 404 "no data" | low | fixed |
+| F4 | hours ≤ 0 accepted, reads as an empty future window | low | fixed |
+| F5 | 400 responses echo the generated SQL | low | fixed |
 | F6 | Two different answers for "nothing to draw" | decision | open |
 | F7 | Offset-less timestamps depend on the server's TimeZone | medium | open |
 | F8 | Point budget is enforced only after every row is fetched | high | open |
@@ -46,12 +46,18 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - **Same input on a recorded layer** is a correct 400, because Postgres parses it.
 - **Likely fix**: catch `SystemExit` around `_sim_window()` too and answer 400 — or
   have `parse_dt` raise `ValueError` and let the CLI turn that into an exit.
+- **Fixed**: `_sim_window()` now catches the `SystemExit` from `parse_dt` and answers
+  `400 bad query parameter: cannot parse datetime: '…'`. `parse_dt` is unchanged, so
+  the simulator CLI still exits the same way. The xfail marker is removed; the test
+  passes for both inputs.
 
 ### F2 — NUL byte in a timestamp is a 500
 
 - **Found by**: `test_nul_byte_in_timestamp_is_400`.
 - psycopg2 refuses to send a string containing `\x00` and raises `ValueError`, which
   the handler's `except (psycopg2.DataError, …)` does not cover.
+- **Fixed**: the handler catches `ValueError` alongside the psycopg2 errors and answers
+  400. This also covers a NUL byte in `route`, which reaches the same query.
 
 ### F3 — start after end reports "no data"
 
@@ -59,6 +65,10 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - `start=08:10&end=08:00` builds `fetched_at >= 08:10 AND fetched_at <= 08:00`, finds
   nothing, and answers `404 no data for this query`. The window is invalid, not empty;
   the simulator's own CLI already rejects it (`--end must be after --start`).
+- **Fixed**: `/api/trips` checks the order of `start` and `end` before querying and answers
+  `400 start must be before end`, for recorded and simulated layers alike. Strings
+  Python cannot parse are left for Postgres to reject as before. Equal start and end
+  are still accepted.
 
 ### F4 — non-positive `hours` is accepted
 
@@ -66,6 +76,11 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - `min_points` is declared `ge=0`; `hours` has no bound. `hours=-1` becomes
   `fetched_at >= NOW() - INTERVAL '-1 hours'`, a window in the future → 404.
   `hours=nan` / `inf` are already rejected (Postgres cannot parse the interval).
+- **Fixed**: `hours` is declared `Query(None, gt=0)`, so 0 and negative values are
+  rejected with 422 before any query, the same way an out-of-range `min_points` is.
+  `allow_inf_nan=False` is set too, so `nan` and `inf` — previously a 400 from Postgres
+  failing to parse the interval — are now also 422 from validation;
+  `test_non_finite_hours_is_rejected` expects 422 accordingly.
 
 ### F5 — error details include the SQL
 
@@ -73,6 +88,9 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - The 400 detail is `f"bad query parameter: {e}"`, and psycopg2's message includes the
   `LINE 5: … latitude BETWEEN 44.5 AND 46.5 AND fetched_at >= 'notadate'` context.
   CORS limits the API to localhost, so this is hygiene rather than exposure.
+- **Fixed**: the 400 detail keeps only the first line of the database message, e.g.
+  `bad query parameter: invalid input syntax for type timestamp with time zone: "notadate"`.
+  The value the client sent is still named; the SQL context is not.
 
 ### F6 — "nothing to draw" has two answers
 

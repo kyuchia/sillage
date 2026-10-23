@@ -137,6 +137,23 @@ def _resolve_layers(layer):
     return [l for l in ALL_LAYERS if l in want]
 
 
+def _check_window_order(start, end):
+    """Reject a window whose start is after its end (F3).
+
+    Such a window is invalid, not empty, and would otherwise reach the database and
+    come back as "no data". Strings Python cannot parse are left alone here: Postgres
+    accepts more formats and reports the bad ones itself.
+    """
+    if not (start and end):
+        return
+    try:
+        lo, hi = gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
+    except SystemExit:
+        return
+    if lo > hi:
+        raise HTTPException(status_code=400, detail="start must be before end")
+
+
 # ---------------------------------------------------------------- simulated layers
 
 def _sim_window(start, end, hours):
@@ -146,7 +163,13 @@ def _sim_window(start, end, hours):
     unbounded request has no natural answer — it is rejected rather than guessed at.
     """
     if start and end:
-        return gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
+        try:
+            return gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
+        except SystemExit as e:
+            # parse_dt is shared with the CLI, where SystemExit is the right exit;
+            # here it is a bad parameter, not a server error (F1)
+            raise HTTPException(status_code=400,
+                                detail=f"bad query parameter: {str(e).lstrip('❌ ')}")
     if hours is not None:
         now = datetime.now(gtfs_sim.TZ)
         return now - timedelta(hours=hours), now
@@ -230,7 +253,8 @@ def _add_simulated(payload, sim_layers, start, end, hours, route):
 def api_trips(
     start: str | None = Query(None, description='e.g. "2026-04-14 23:15-04:00"'),
     end: str | None = Query(None),
-    hours: float | None = Query(None, description="last N hours; needs a live fetcher"),
+    hours: float | None = Query(None, gt=0, allow_inf_nan=False,
+                               description="last N hours; needs a live fetcher"),
     layer: str = Query("both", description=("bus | aircraft | metro | train | rem | both | all, "
                                         "or a comma-separated list e.g. metro,rem")),
     route: str | None = Query(None, description="filter to one route (bus layer only)"),
@@ -245,6 +269,7 @@ def api_trips(
     (metro, train, rem), `both` (the two recorded layers — unchanged default), or `all`.
     """
     want = _resolve_layers(layer)
+    _check_window_order(start, end)
 
     db_layers = [l for l in want if l in DB_LAYERS]
     sim_layers = [l for l in want if l in SIM_LAYERS]
@@ -268,10 +293,15 @@ def api_trips(
                         detail=f"no data for this query (empty layers: {', '.join(e.empty)})",
                     )
                 db_empty = e.empty
-            except (psycopg2.DataError, psycopg2.errors.InvalidDatetimeFormat) as e:
+            except (psycopg2.DataError, psycopg2.errors.InvalidDatetimeFormat,
+                    ValueError) as e:
                 # Almost always an unparseable start/end string; Postgres does the
-                # parsing, so this is where a bad timestamp surfaces.
-                raise HTTPException(status_code=400, detail=f"bad query parameter: {e}")
+                # parsing, so this is where a bad timestamp surfaces. ValueError is
+                # psycopg2 refusing to send a string containing a NUL byte (F2).
+                # First line only: psycopg2 appends the offending SQL ("LINE 5: …"),
+                # which is not the client's business (F5).
+                first = str(e).strip().splitlines()[0]
+                raise HTTPException(status_code=400, detail=f"bad query parameter: {first}")
 
     if sim_layers:
         payload = _add_simulated(payload, sim_layers, start, end, hours, route)

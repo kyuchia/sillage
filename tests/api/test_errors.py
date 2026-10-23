@@ -61,7 +61,8 @@ def test_wrongly_typed_parameter_is_422(client, params, field):
 
 @pytest.mark.parametrize("hours", ["nan", "inf"])
 def test_non_finite_hours_is_rejected(client, hours):
-    assert client.get("/api/trips", params={"hours": hours}).status_code == 400
+    # 422 since F4: rejected by validation, before Postgres sees the interval
+    assert client.get("/api/trips", params={"hours": hours}).status_code == 422
 
 
 def test_route_is_a_bound_parameter_not_sql(client, db):
@@ -156,7 +157,6 @@ def test_simulated_layer_without_a_full_window_is_400(client, params):
 
 # ---------------------------------------------------------------- findings
 
-@finding("F1", "an unparseable start/end on a simulated layer raises SystemExit (500)")
 @pytest.mark.parametrize("start", ["notadate", "2026-13-45"])
 def test_simulated_layer_with_unparseable_timestamp_is_400(app_module, start):
     with pytest.raises(HTTPException) as e:
@@ -164,7 +164,6 @@ def test_simulated_layer_with_unparseable_timestamp_is_400(app_module, start):
     assert e.value.status_code == 400
 
 
-@finding("F2", "a NUL byte in start/end escapes as an unhandled ValueError (500)")
 def test_nul_byte_in_timestamp_is_400(client):
     from fastapi.testclient import TestClient
     with TestClient(client.app, raise_server_exceptions=False) as c:
@@ -172,20 +171,17 @@ def test_nul_byte_in_timestamp_is_400(client):
     assert r.status_code == 400
 
 
-@finding("F3", "start after end reports 'no data' (404) instead of rejecting the window")
 def test_start_after_end_is_400(client):
     r = client.get("/api/trips", params={"start": SEED.WINDOW_END, "end": SEED.WINDOW_START})
     assert r.status_code in (400, 422)
     assert "before" in r.json()["detail"] or "after" in str(r.json()["detail"])
 
 
-@finding("F4", "hours <= 0 is accepted and silently reads as an empty future window")
 @pytest.mark.parametrize("hours", [0, -1, -24])
 def test_non_positive_hours_is_rejected(client, hours):
     assert client.get("/api/trips", params={"hours": hours}).status_code in (400, 422)
 
 
-@finding("F5", "400 details echo the generated SQL back to the client")
 def test_error_detail_does_not_leak_sql(client):
     detail = client.get("/api/trips", params={"start": "notadate"}).json()["detail"]
     assert "LINE" not in detail and "BETWEEN" not in detail
