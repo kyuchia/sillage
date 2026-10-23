@@ -1,0 +1,26 @@
+micronaut:
+  application:
+    name: sillage-api-kotlin
+  server:
+    # FastAPI runs on 8000; override with MICRONAUT_SERVER_PORT
+    port: 8081
+    netty:
+      # A start/end of several kB must reach the handler and come back as a 400 from
+      # Postgres, not be cut off by Netty's 4096-byte request-line default.
+      max-initial-line-length: 16384
+      # gzip above 1 kB, like the Python service's GZipMiddleware(minimum_size=1024)
+      compression-threshold: 1024
+    cors:
+      enabled: true
+      configurations:
+        localhost:
+          allowed-origins-regex: '^https?://(localhost|127\.0\.0\.1)(:\d+)?$'
+          allowed-methods:
+            - GET
+
+sillage:
+  # The same libpq connection string the Python service reads, e.g.
+  # "dbname=sillage" or "host=localhost user=postgres dbname=sillage_test"
+  pg-dsn: ${PG_DSN:dbname=sillage}
+  # Point budget for one /api/trips response; same variable as the Python service.
+  max-points: ${MTL_MAX_POINTS:400000}
