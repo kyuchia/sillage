@@ -27,7 +27,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F5 | 400 responses echo the generated SQL | low | fixed |
 | F6 | Two different answers for "nothing to draw" | decision | open |
 | F7 | Offset-less timestamps depend on the server's TimeZone | medium | fixed |
-| F8 | Point budget is enforced only after every row is fetched | high | open |
+| F8 | Point budget is enforced only after every row is fetched | high | fixed |
 | F9 | Duplicate fixes reach the payload | decision | kept — 0 in the archive |
 | F10 | `route` documented as bus-only, also filters simulated layers | low | fixed |
 | F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
@@ -133,8 +133,20 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
   `build_trips` has assembled them. On the seed the test fetched 116 rows to refuse a
   10-point budget; against the archive, `/api/trips?layer=bus` with no window would
   pull ~23.7M rows into Python before answering 413.
-- **Next**: measure it with k6 against the real database before choosing a fix
-  (e.g. a `COUNT(*)` or `LIMIT MAX_POINTS + 1` probe before the real query).
+- **Fixed** in both services: before the real query, `check_budget()` /
+  `checkBudget()` counts each layer's matching rows with
+  `SELECT count(*) FROM (SELECT 1 … LIMIT remaining + 1)`. The inner LIMIT lets
+  Postgres stop as soon as the budget is exceeded, and without an ORDER BY nothing is
+  sorted first. Over budget → 413 before a single row is fetched.
+- **Behaviour change**: the budget now counts rows the query matches, before
+  `min_points` drops short traces — the rows that would actually be held in memory.
+  The 413 message reads "more than N points match this query". A request whose
+  matched rows fit but whose simulated layers push it over is still caught by the
+  original after-the-fact count (`test_simulated_points_can_still_push_the_payload_over_the_budget`).
+- The strict xfail now passes; `test_payload_exactly_at_the_budget_is_allowed` moved
+  its boundary from 119 kept points to 121 matched rows. Kotlin: `PointBudgetTest`,
+  `PointBudgetBoundaryTest`.
+- **Measured**: see the load-test section (k6 on the archive, before vs after).
 
 ### F9 — duplicate fixes reach the payload
 

@@ -110,3 +110,16 @@ def test_cli_exits_nonzero_on_an_empty_window(seeded_db, tmp_path):
     assert proc.returncode == 1
     assert "no data in any layer" in proc.stdout
     assert not (tmp_path / "x.json").exists()
+
+
+def test_simulated_points_can_still_push_the_payload_over_the_budget(
+        client, app_module, monkeypatch, synthetic_metro):
+    # The recorded rows fit, so the pre-fetch check passes; the metro trains generated
+    # in memory then take the total over, and the after-the-fact count refuses it.
+    bus = sum(SEED.BUS_TRIPS.values()) + 2
+    monkeypatch.setattr(app_module, "MAX_POINTS", bus)
+    assert client.get("/api/trips", params={"layer": "bus", **WINDOW}).status_code == 200
+    r = client.get("/api/trips", params={"layer": "bus,metro", **WINDOW})
+    assert r.status_code == 413
+    assert "points exceeds the" in r.json()["detail"]
+    assert "more than" not in r.json()["detail"]

@@ -112,14 +112,17 @@ def test_payload_over_the_point_budget_is_413(client, app_module, monkeypatch):
 
 
 def test_payload_exactly_at_the_budget_is_allowed(client, app_module, monkeypatch):
-    total = sum(SEED.BUS_TRIPS.values()) + sum(SEED.AIRCRAFT_TRIPS.values())
-    monkeypatch.setattr(app_module, "MAX_POINTS", total)
+    # The budget is checked against rows the query matches, before min_points drops
+    # short traces (F8): the kept points plus the short trip's two.
+    matched = sum(SEED.BUS_TRIPS.values()) + sum(SEED.AIRCRAFT_TRIPS.values()) + 2
+    monkeypatch.setattr(app_module, "MAX_POINTS", matched)
     assert client.get("/api/trips", params=WINDOW).status_code == 200
-    monkeypatch.setattr(app_module, "MAX_POINTS", total - 1)
-    assert client.get("/api/trips", params=WINDOW).status_code == 413
+    monkeypatch.setattr(app_module, "MAX_POINTS", matched - 1)
+    r = client.get("/api/trips", params=WINDOW)
+    assert r.status_code == 413
+    assert r.json()["detail"].startswith(f"payload too large: more than {matched - 1:,} points")
 
 
-@finding("F8", "an over-budget request materialises every row before it is refused")
 def test_over_budget_request_is_refused_without_fetching_everything(
         client, app_module, monkeypatch):
     import trips_query
