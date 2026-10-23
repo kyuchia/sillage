@@ -10,6 +10,8 @@ Named after *sillage*, the French word for the wake a boat leaves on water, Sill
 
 The [published demo](https://kyuchia.github.io/sillage/) uses curated, precomputed scenes and requires no backend. Run the project locally to query arbitrary time windows directly from the database.
 
+The recorded-layer API also has a Kotlin/Micronaut implementation, validated against the FastAPI version through automated parity tests. See [Kotlin port](#kotlin-port-api-kotlin).
+
 ---
 
 ## What it does
@@ -197,7 +199,7 @@ Finally, static GTFS feeds cover limited service periods. Historical recordings 
 
 [![tests](https://github.com/kyuchia/sillage/actions/workflows/test.yml/badge.svg)](https://github.com/kyuchia/sillage/actions/workflows/test.yml)
 
-The suite runs against a throwaway PostGIS database built from `db/schema.sql` and a 164-row seed (`tests/fixtures/seed.sql`), never against the recorded archive. GitHub Actions runs it on every push in a `postgis/postgis` service container.
+The suite runs against a throwaway PostGIS database built from `db/schema.sql` and a 164-row seed (`tests/fixtures/seed.sql`), never against the recorded archive. GitHub Actions runs it on every push in a `postgis/postgis` service container. A separate CI job builds and tests the Kotlin implementation, then checks its API responses against FastAPI using the seeded PostGIS database.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
@@ -215,7 +217,7 @@ Findings are recorded in [`qa/testing_log.md`](qa/testing_log.md). Tests describ
 
 ## Kotlin port (`api-kotlin/`)
 
-A second implementation of the API's database side in Kotlin with Micronaut, reading the same PostGIS tables and answering with the same JSON. It exists to show the query contract holds outside Python: one specification, two services, and a test that proves they agree.
+The [`api-kotlin/`](api-kotlin/) directory contains a second implementation of the API's database-backed endpoints, built with Kotlin and Micronaut. It reads the same PostGIS tables and returns the same JSON. It exists to show the query contract holds outside Python: one specification, two services, and a test that proves they agree.
 
 **Scope.** `/api/health`, `/api/range` and `/api/trips` for the recorded layers: `bus`, `aircraft`, `both`. The GTFS schedule simulation (`metro`, `train`, `rem`, `all`) stays in Python; the port answers those with a 400 that says so rather than returning a partial result.
 
@@ -228,6 +230,8 @@ SILLAGE_TEST_DSN="dbname=sillage_test" ./gradlew test
 It reads the same `PG_DSN` (libpq format) and `MTL_MAX_POINTS` as the Python service, and needs JDK 21.
 
 **Parity test.** `scripts/parity_kotlin.py` sends the same 55 requests to both servers and compares them: whole JSON bodies for every 200, status and `detail` for 400 and 404, and each problem's location and type for 422. The cases cover every layer spelling, the filters, windows across midnight and in other offsets, offset-less times on a server in another time zone, and the invalid-input cases from `tests/api/test_errors.py`. CI runs it after the Kotlin tests, against the seeded database.
+
+**Results.** All 55 parity cases pass against the seeded database in CI. A separate run against the recorded archive (`--real`) also passed all 8 cases.
 
 ```bash
 (cd api-kotlin && ./gradlew installDist)
