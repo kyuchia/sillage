@@ -31,7 +31,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "export"))
 sys.path.insert(0, str(ROOT / "simulate"))
 
-from trips_query import NoDataError, VALID_LAYERS, build_trips, get_range  # noqa: E402
+from trips_query import (  # noqa: E402
+    NoDataError, VALID_LAYERS, build_trips, get_range, use_montreal_time,
+)
 import gtfs_sim  # noqa: E402
 
 # Recorded layers come from Postgres; simulated ones are materialised from archived
@@ -94,6 +96,7 @@ def db_conn():
 
     conn = pool.getconn()
     try:
+        use_montreal_time(conn)
         yield conn
         conn.rollback()
     except Exception:

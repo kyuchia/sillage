@@ -26,7 +26,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F4 | hours ≤ 0 accepted, reads as an empty future window | low | fixed |
 | F5 | 400 responses echo the generated SQL | low | fixed |
 | F6 | Two different answers for "nothing to draw" | decision | open |
-| F7 | Offset-less timestamps depend on the server's TimeZone | medium | open |
+| F7 | Offset-less timestamps depend on the server's TimeZone | medium | fixed |
 | F8 | Point budget is enforced only after every row is fetched | high | open |
 | F9 | Duplicate fixes reach the payload | decision | kept — 0 in the archive |
 | F10 | `route` documented as bus-only, also filters simulated layers | low | fixed |
@@ -113,6 +113,16 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
   accident. In CI (UTC) or on a cluster initialised in Taipei they do not.
 - The frontend always sends offset-aware timestamps (from `/api/range`), so the page is
   unaffected; hand-written URLs and the CLI are.
+- **Fixed**: `trips_query.use_montreal_time(conn)` runs `SET LOCAL TIME ZONE
+  'America/Montreal'` at the start of each transaction — in the API for every borrowed
+  connection, and in `export_trips.py` after it connects — so an offset-less start/end
+  means Montréal time on any server, on both halves of a payload. `SET LOCAL` ends with
+  the transaction, so pooled connections are not left changed.
+  **Visible side effect**: timestamps in the payload and in `/api/range` now always
+  carry Montréal offsets (−04:00 / −05:00) instead of the server's. On the original
+  machine the cluster was already in Montréal time, so nothing changes there; in CI
+  (UTC) the offsets now match the simulated layers. The full suite was also run with
+  the server in UTC and in Asia/Taipei: 154 passed both times, including CLI/API parity.
 
 ### F8 — the point budget is checked after the full fetch
 

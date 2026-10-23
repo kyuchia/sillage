@@ -187,7 +187,6 @@ def test_error_detail_does_not_leak_sql(client):
     assert "LINE" not in detail and "BETWEEN" not in detail
 
 
-@finding("F7", "offset-less timestamps follow the server's TimeZone; the simulator assumes Montréal")
 @pytest.mark.parametrize("server_tz", ["UTC", "Asia/Taipei"])
 def test_naive_timestamps_mean_montreal_time_on_any_server(app_module, monkeypatch, server_tz):
     from fastapi.testclient import TestClient
