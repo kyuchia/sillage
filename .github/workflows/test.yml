@@ -130,9 +130,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Firefox is run locally instead: on the GPU-less runner it hung before
-        # finishing a single test (see qa/testing_log.md, 2026-10-24).
-        browser: [chromium, webkit]
+        browser: [chromium, firefox, webkit]
 
     env:
       BASE_URL: ${{ inputs.e2e_base_url || 'http://localhost:8765/' }}
@@ -161,7 +159,7 @@ jobs:
 
       - name: Run e2e tests (${{ matrix.browser }})
         run: >-
-          pytest tests/e2e
+          pytest tests/e2e -v
           --base-url "$BASE_URL"
           --browser ${{ matrix.browser }}
           --screenshot only-on-failure

@@ -81,20 +81,37 @@ class Demo:
     def wait_ready(self, scene_label: str | None = None):
         page = self.page
         page.locator("#modeList .mode").first.wait_for(state="attached", timeout=READY_TIMEOUT_MS)
-        page.wait_for_function(
-            "() => !document.getElementById('dial').dataset.level",
-            polling=POLL_MS,
-            timeout=READY_TIMEOUT_MS,
-        )
         if scene_label:
+            # The new scene's name in the status line, or a warn/error, whichever comes first.
             page.wait_for_function(
-                "label => document.getElementById('banner').textContent.includes(label)",
+                """label => document.getElementById('banner').textContent.includes(label)
+                          || !!document.getElementById('dial').dataset.level""",
                 arg=scene_label,
                 polling=POLL_MS,
                 timeout=READY_TIMEOUT_MS,
             )
         # Let the basemap tiles and the deck.gl overlay settle before anything is judged.
         page.wait_for_load_state("networkidle", timeout=READY_TIMEOUT_MS)
+        # A warn/error in the status line fails at once, with the page's own message,
+        # instead of being waited out (a browser without WebGL shows one straight away).
+        level = page.locator("#dial").get_attribute("data-level")
+        if level:
+            pytest.fail(f"status line is {level}: {page.locator('#banner').text_content()}")
+
+
+@pytest.fixture(scope="session")
+def browser_type_launch_args(browser_type_launch_args, browser_name):
+    """Firefox: allow software WebGL.
+
+    Chromium and WebKit fall back to a software WebGL on a machine with no GPU (CI
+    runners, Docker). Firefox's blocklist refuses it ("Exhausted GL driver options"),
+    so MapLibre cannot start and the page shows its error line. This pref lifts the
+    blocklist; on a machine with a GPU it changes nothing.
+    """
+    if browser_name == "firefox":
+        prefs = {**browser_type_launch_args.get("firefox_user_prefs", {}), "webgl.force-enabled": True}
+        return {**browser_type_launch_args, "firefox_user_prefs": prefs}
+    return browser_type_launch_args
 
 
 @pytest.fixture(params=list(VIEWPORTS), ids=list(VIEWPORTS))
