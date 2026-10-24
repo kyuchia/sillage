@@ -298,7 +298,8 @@ dropping tiles it no longer needs) are not counted as failures.
 | Run | Where | Target | Result |
 |---|---|---|---|
 | Chromium | cloud sandbox | `docs/` via `http.server`; deck.gl and MapLibre served from their npm packages and the Carto style stubbed, as the sandbox cannot reach unpkg or Carto | **19 passed, 3 skipped** |
-| Chromium, Firefox, WebKit | GitHub Actions (`e2e` job, one per browser) | this checkout's `docs/` | pending first run |
+| Chromium, WebKit | GitHub Actions (`e2e` job, one per browser) | this checkout's `docs/` | **passed** (19 passed, 3 skipped each) |
+| Firefox | GitHub Actions | this checkout's `docs/` | **hung**: no test finished in 14.5 min, cancelled at the 15-min job limit; removed from the CI matrix |
 | Chromium, Firefox, WebKit | owner's Mac (Apple silicon), Playwright browsers Chromium 153, Firefox 155, WebKit 26.6 | `https://kyuchia.github.io/sillage/` | **57 passed, 9 skipped** (66 = 22 × 3; 5 min 8 s) |
 
 **Observations (not findings)**
@@ -311,6 +312,17 @@ dropping tiles it no longer needs) are not counted as failures.
   tests keep the default one. On a machine with a GPU this does not arise. Whether a
   visitor without hardware acceleration matters is a product question; it was not
   measured on real hardware.
+- **Firefox hangs on the CI runner.** Two runs printed `collected 22 items` and
+  nothing else for 14–18 minutes. Every wait in the suite is bounded (90 s to be
+  ready, 30 s per action), so a slow page would have failed a test within minutes;
+  printing nothing points at the browser itself not responding, most likely Firefox's
+  software WebGL on a machine with no GPU. Firefox passes on the Mac against the live
+  demo, so the page is not at fault. Not investigated further: each attempt costs a
+  15-minute CI run. CI keeps Chromium and WebKit; Firefox is run locally.
+- WebKit on the runner first failed the overlay check: deck.gl's canvas is attached on
+  MapLibre's `load`, which waits for the first basemap tiles to be drawn, and without a
+  GPU that came after the scene was ready. The check now waits up to 60 s for the
+  canvas instead of counting once (`fb9ebe5`).
 - The bottom strip fades after a few idle seconds and returns on pointer movement (by
   design). The strip tests move the mouse over it before clicking, as a visitor would.
 - deck.gl logs five deprecation warnings per load (`rounded` → `jointRounded` /
