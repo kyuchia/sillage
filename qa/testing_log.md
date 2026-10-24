@@ -299,7 +299,7 @@ dropping tiles it no longer needs) are not counted as failures.
 |---|---|---|---|
 | Chromium | cloud sandbox | `docs/` via `http.server`; deck.gl and MapLibre served from their npm packages and the Carto style stubbed, as the sandbox cannot reach unpkg or Carto | **19 passed, 3 skipped** |
 | Chromium, Firefox, WebKit | GitHub Actions (`e2e` job, one per browser) | this checkout's `docs/` | pending first run |
-| Chromium, Firefox, WebKit | owner's Mac | `https://kyuchia.github.io/sillage/` | pending |
+| Chromium, Firefox, WebKit | owner's Mac (Apple silicon), Playwright browsers Chromium 153, Firefox 155, WebKit 26.6 | `https://kyuchia.github.io/sillage/` | **57 passed, 9 skipped** (66 = 22 × 3; 5 min 8 s) |
 
 **Observations (not findings)**
 
