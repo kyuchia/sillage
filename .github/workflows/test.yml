@@ -2,6 +2,7 @@ name: tests
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -125,6 +126,7 @@ jobs:
   # GitHub Pages serves it (no API, so /api/range is a 404 and the baked scenes play).
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
