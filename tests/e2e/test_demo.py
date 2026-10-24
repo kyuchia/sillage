@@ -13,10 +13,12 @@ from playwright.sync_api import expect
 # ---- loading -------------------------------------------------------------------------
 
 def test_map_and_trail_overlay_render(demo):
-    # MapLibre's basemap canvas plus deck.gl's overlay canvas.
+    # MapLibre's basemap canvas, then deck.gl's overlay canvas. The overlay is attached
+    # on MapLibre's "load", which waits for the first basemap tiles to be drawn; without
+    # a GPU (WebKit on a CI runner) that can come well after the scene is ready.
     canvases = demo.page.locator("#map canvas")
     expect(canvases.first).to_be_visible()
-    assert canvases.count() >= 2, "deck.gl overlay canvas missing"
+    expect(canvases.nth(1)).to_be_attached(timeout=60_000)
 
 
 def test_first_scene_loads_without_a_warning(demo, manifest):
