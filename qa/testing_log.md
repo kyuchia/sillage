@@ -273,6 +273,51 @@ than 200/413.
 
 ---
 
+## 2026-10-24 — end-to-end tests (Playwright) on the static demo
+
+`tests/e2e/` (pytest-playwright 0.10, Playwright 1.63): the demo in `docs/` as GitHub
+Pages serves it — no API, so `/api/range` is a 404 and the baked scenes play. Each
+test runs at desktop (1280×800) and phone (390×844) size: 11 tests × 2 viewports = 22
+per browser, 3 of them skipped by design (no clock or slider on a phone; the layout
+check is phone-only). Skipped entirely without `--base-url`, so the pytest job does not
+need a browser.
+
+What is checked: MapLibre's and deck.gl's canvases exist; the first scene loads with
+no warning and one legend row per mode; no uncaught exception or console error; every
+request succeeds; the Controls panel opens and closes (full width on a phone); a scene
+switch loads that scene's JSON and updates the URL; a layer toggle hides and shows a
+mode; About opens and closes; on desktop the clock runs, pauses and follows the slider;
+on a phone nothing scrolls sideways and the lockup and its links are on screen. No
+pixel comparison.
+
+One request is expected to fail: the `/api/range` 404 is how the page decides it is
+static. Chromium and WebKit log it as a console error, so it is the only exception in
+both the console and the request checks. Requests the browser cancels itself (MapLibre
+dropping tiles it no longer needs) are not counted as failures.
+
+| Run | Where | Target | Result |
+|---|---|---|---|
+| Chromium | cloud sandbox | `docs/` via `http.server`; deck.gl and MapLibre served from their npm packages and the Carto style stubbed, as the sandbox cannot reach unpkg or Carto | **19 passed, 3 skipped** |
+| Chromium, Firefox, WebKit | GitHub Actions (`e2e` job, one per browser) | this checkout's `docs/` | pending first run |
+| Chromium, Firefox, WebKit | owner's Mac (Apple silicon), Playwright browsers Chromium 153, Firefox 155, WebKit 26.6 | `https://kyuchia.github.io/sillage/` | **57 passed, 9 skipped** (66 = 22 × 3; 5 min 8 s) |
+
+**Observations (not findings)**
+
+- **Without a GPU the replay is very slow.** In the sandbox (2 cores, software WebGL)
+  the default scene (morning peak, 174k points) drew about 0.3 frames per second and
+  the night scene about 2. Playwright waits for an element to be stable across frames
+  before clicking, so clicks on the default scene timed out. The clicking tests
+  therefore load the lightest scene in the manifest; the loading, console and request
+  tests keep the default one. On a machine with a GPU this does not arise. Whether a
+  visitor without hardware acceleration matters is a product question; it was not
+  measured on real hardware.
+- The bottom strip fades after a few idle seconds and returns on pointer movement (by
+  design). The strip tests move the mouse over it before clicking, as a visitor would.
+- deck.gl logs five deprecation warnings per load (`rounded` → `jointRounded` /
+  `capRounded` on the trips layers). Warnings, not errors; not changed.
+
+---
+
 ## Data-quality checks
 
 `qa/data_quality.py` holds nine SQL checks. Before they are trusted on the archive,
