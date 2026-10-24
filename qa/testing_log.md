@@ -33,7 +33,7 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
 | F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | open |
 | F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | open |
-| F14 | More than 8 concurrent requests → 500 "connection pool exhausted" (Python) | high | open |
+| F14 | More than 8 concurrent requests → 500 "connection pool exhausted" (Python) | high | fixed |
 
 ### F1 — unparseable timestamp on a simulated layer is a 500
 
@@ -188,9 +188,37 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - The Kotlin service's Hikari pool (also 8) queues instead: **0 errors** at 10 and
   100 VUs (5 × 503 at 50 VUs in one run, its 3 s `connectionTimeout`), ~7–8 req/s
   at every level, and latency growing with the queue (p50 1.3 s → 11–13 s).
-- **Next**: decide with the owner. A fix would make `db_conn()` wait for a free
-  connection (a semaphore of 8 around `getconn`, with a timeout → 503), so both
-  services behave the same way under load.
+- **Fixed**: `db_conn()` now takes one of 8 slots (`threading.BoundedSemaphore`, one
+  per pooled connection) before `getconn()`, waiting up to `MTL_POOL_WAIT_SEC`
+  (default 3 s, Hikari's `connectionTimeout` in Kotlin). A request that cannot get one
+  in time is a **503 "database busy: no connection became free within 3 s. Try again
+  shortly."** — a temporary condition a client may retry, not a server fault.
+- Kotlin said "cannot connect to PostgreSQL" for the same situation. A Hikari timeout
+  with no cause (every connection in use) now gives the same "database busy" 503;
+  one caused by a failed connect keeps "cannot connect".
+- Tests: `test_requests_beyond_the_pool_wait_for_a_free_connection`,
+  `test_a_request_that_waits_too_long_is_503_not_500`; Kotlin `PoolBusyTest`. On the
+  seed, k6 at 10/50/100 VUs went from 14–60% errors to none.
+- **Measured on the archive** (`SERVICES=python SCENARIOS=concurrency load/bench.sh f14`,
+  1-hour bus window, 60 s per stage; "after" is the F8-fixed run):
+
+  | VUs | 200s after | 500s after | 200s f14 | 503s f14 | p50 f14 |
+  |---:|---:|---:|---:|---:|---:|
+  | 10 | 43 | 1,093 | 40 | 18 | 11.80 s |
+  | 50 | 65 | 1,255 | 56 | 467 | 5.20 s |
+  | 100 | 48 | 2,576 | 57 | 531 | 10.85 s |
+
+- **What changed**: no 500s; a request that cannot get a connection waits 3 s and gets
+  a 503 it can retry, instead of an instant 500 that its client retries at once. The
+  error *rate* fell (96% → 31% at 10 VUs) mostly because refused requests now take 3 s
+  instead of 3 ms, so there are fewer of them — it is not a fair headline.
+- **What did not change**: successful responses, ~40–60 a minute, as before. The fix
+  is about answering correctly under load, not about speed.
+- **Why Python is slow under load**: one 1-hour request takes 1.9 s alone but ~12 s
+  with 8 in flight. Assembling and serialising 155k points is CPU-bound Python, and the
+  GIL runs one thread at a time, so concurrent requests mostly slow each other down.
+  Kotlin, on the JVM, serves ~7 req/s at the same load. Scaling Python would take
+  several worker processes (`uvicorn --workers N`); not done here.
 
 ---
 

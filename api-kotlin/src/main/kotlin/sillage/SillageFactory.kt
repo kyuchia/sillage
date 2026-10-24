@@ -30,7 +30,7 @@ class SillageFactory {
             maximumPoolSize = 8
             minimumIdle = 1
             isAutoCommit = false
-            connectionTimeout = 3_000
+            connectionTimeout = POOL_WAIT_MILLIS
             initializationFailTimeout = -1
             poolName = "sillage"
         }

@@ -6,6 +6,8 @@ import pytest
 
 from conftest import SEED, parse
 
+WINDOW = {"start": SEED.WINDOW_START, "end": SEED.WINDOW_END}
+
 
 # ---------------------------------------------------------------- /api/range
 
@@ -101,3 +103,31 @@ def test_cors_refuses_other_origins(client, origin):
 
 def test_api_is_read_only(client):
     assert client.post("/api/trips").status_code == 405
+
+
+# ---------------------------------------------------------------- pool (F14)
+
+def test_requests_beyond_the_pool_wait_for_a_free_connection(client, app_module, monkeypatch):
+    import threading
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(app_module, "_SLOTS", slots)
+    monkeypatch.setattr(app_module, "POOL_WAIT_SEC", 2.0)
+    slots.acquire()                                     # every connection is out
+    threading.Timer(0.2, slots.release).start()          # one comes back shortly
+    assert client.get("/api/trips", params=WINDOW).status_code == 200
+
+
+def test_a_request_that_waits_too_long_is_503_not_500(client, app_module, monkeypatch):
+    import threading
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(app_module, "_SLOTS", slots)
+    monkeypatch.setattr(app_module, "POOL_WAIT_SEC", 0.1)
+    slots.acquire()
+    try:
+        r = client.get("/api/trips", params=WINDOW)
+    finally:
+        slots.release()
+    assert r.status_code == 503
+    assert r.json()["detail"] == (
+        "database busy: no connection became free within 0.1 s. Try again shortly.")
+    assert client.get("/api/trips", params=WINDOW).status_code == 200   # slot handed back
