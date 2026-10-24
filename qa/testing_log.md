@@ -199,8 +199,26 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - Tests: `test_requests_beyond_the_pool_wait_for_a_free_connection`,
   `test_a_request_that_waits_too_long_is_503_not_500`; Kotlin `PoolBusyTest`. On the
   seed, k6 at 10/50/100 VUs went from 14–60% errors to none.
-- **Measured on the archive**: pending (`SERVICES=python SCENARIOS=concurrency
-  load/bench.sh f14`).
+- **Measured on the archive** (`SERVICES=python SCENARIOS=concurrency load/bench.sh f14`,
+  1-hour bus window, 60 s per stage; "after" is the F8-fixed run):
+
+  | VUs | 200s after | 500s after | 200s f14 | 503s f14 | p50 f14 |
+  |---:|---:|---:|---:|---:|---:|
+  | 10 | 43 | 1,093 | 40 | 18 | 11.80 s |
+  | 50 | 65 | 1,255 | 56 | 467 | 5.20 s |
+  | 100 | 48 | 2,576 | 57 | 531 | 10.85 s |
+
+- **What changed**: no 500s; a request that cannot get a connection waits 3 s and gets
+  a 503 it can retry, instead of an instant 500 that its client retries at once. The
+  error *rate* fell (96% → 31% at 10 VUs) mostly because refused requests now take 3 s
+  instead of 3 ms, so there are fewer of them — it is not a fair headline.
+- **What did not change**: successful responses, ~40–60 a minute, as before. The fix
+  is about answering correctly under load, not about speed.
+- **Why Python is slow under load**: one 1-hour request takes 1.9 s alone but ~12 s
+  with 8 in flight. Assembling and serialising 155k points is CPU-bound Python, and the
+  GIL runs one thread at a time, so concurrent requests mostly slow each other down.
+  Kotlin, on the JVM, serves ~7 req/s at the same load. Scaling Python would take
+  several worker processes (`uvicorn --workers N`); not done here.
 
 ---
 
