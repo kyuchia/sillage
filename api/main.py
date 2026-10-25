@@ -55,6 +55,13 @@ PG_DSN = os.environ.get("PG_DSN", "dbname=sillage")
 # writing a huge file to disk is a legitimate thing to want.
 MAX_POINTS = int(os.environ.get("MTL_MAX_POINTS", 400_000))
 
+# How wide a window the simulated layers will materialise. Unlike a database query, a
+# schedule exists for any instant, so a year-wide request is not empty — it is thousands
+# of service days, each scanning every trip in the feed. The point budget below bounds
+# the output; this bounds the work done to discover it (F15). 48 h is well past any
+# window the page asks for and still a fraction of a second of scanning.
+MAX_SIM_HOURS = float(os.environ.get("MTL_MAX_SIM_HOURS", 48))
+
 # Requests wait this long for a free database connection before a 503 (F14). The same
 # 3 s as the Kotlin service's Hikari connectionTimeout, so both behave alike under load.
 POOL_SIZE = 8
@@ -230,24 +237,36 @@ def _sim_window(start, end, hours):
     """Resolve the absolute window the simulator needs.
 
     Unlike a DB query, a schedule can be materialised for any instant in history, so an
-    unbounded request has no natural answer — it is rejected rather than guessed at.
+    unbounded request has no natural answer — it is rejected rather than guessed at, and
+    so is one wider than MAX_SIM_HOURS (F15).
     """
     if start and end:
         try:
-            return gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
+            lo, hi = gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
         except SystemExit as e:
             # parse_dt is shared with the CLI, where SystemExit is the right exit;
             # here it is a bad parameter, not a server error (F1)
             raise HTTPException(status_code=400,
                                 detail=f"bad query parameter: {str(e).lstrip('❌ ')}")
-    if hours is not None:
+    elif hours is not None:
         now = datetime.now(gtfs_sim.TZ)
-        return now - timedelta(hours=hours), now
-    raise HTTPException(
-        status_code=400,
-        detail=("simulated layers (metro, train, rem) need an explicit window: "
-                "pass start and end, or hours"),
-    )
+        lo, hi = now - timedelta(hours=hours), now
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=("simulated layers (metro, train, rem) need an explicit window: "
+                    "pass start and end, or hours"),
+        )
+
+    span_hours = (hi - lo).total_seconds() / 3600
+    if span_hours > MAX_SIM_HOURS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"simulated layers (metro, train, rem) accept at most "
+                    f"{MAX_SIM_HOURS:g} hours per request; this window is "
+                    f"{round(span_hours, 1):g} hours. Narrow start/end or hours."),
+        )
+    return lo, hi
 
 
 def _add_simulated(payload, sim_layers, start, end, hours, route):
@@ -263,13 +282,26 @@ def _add_simulated(payload, sim_layers, start, end, hours, route):
     """
     lo, hi = _sim_window(start, end, hours)
 
+    # Whatever the recorded layers already spent is not available to the schedules: the
+    # budget is for the merged payload, so each mode is given only what is left (F15).
+    remaining = MAX_POINTS
+    if payload is not None:
+        remaining -= sum(len(t["path"]) for t in payload["trips"])
+
     sim_trips = []
     for mode in sim_layers:
         try:
-            trips, _stats = gtfs_sim.simulate(mode, lo, hi, route=route, verbose=False)
+            trips, _stats = gtfs_sim.simulate(mode, lo, hi, route=route, verbose=False,
+                                              max_points=remaining)
+        except gtfs_sim.OverBudget:
+            # Refused before sampling, so the message names what the query matches
+            # rather than what was built — the same wording as the recorded layers.
+            raise HTTPException(status_code=413, detail=_over_budget_detail(
+                f"more than {MAX_POINTS:,} points match this query, which"))
         except SystemExit as e:
             # _latest_zip raises SystemExit when a feed was never archived
             raise HTTPException(status_code=503, detail=str(e))
+        remaining -= sum(len(tr["path"]) for tr in trips)
         sim_trips.extend(trips)
 
     if not sim_trips and payload is None:
@@ -392,8 +424,10 @@ def api_trips(
             detail=f"no data for this query (empty layers: {', '.join(empty)})",
         )
 
-    # Recorded rows were checked before fetching; this still catches simulated layers,
-    # which are generated in memory, pushing the combined payload over the budget.
+    # A final safety net. Both sides now refuse before building anything — recorded rows
+    # are counted before the fetch (F8), simulated samples before the sampling (F15) —
+    # and both counts are upper bounds, so nothing is expected to reach this. It stays
+    # because it is the one check that sees the payload itself.
     total_points = sum(len(t["path"]) for t in payload["trips"])
     if total_points > MAX_POINTS:
         raise HTTPException(status_code=413,
