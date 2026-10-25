@@ -922,9 +922,12 @@ async function describeFailure(res, url) {
   let detail = "";
   try {
     const body = await res.json();
-    if (body && body.detail) detail = " — " + body.detail;
+    // The API echoes query parameters into `detail` (e.g. unknown layer '...'), and
+    // this string is written with innerHTML — so it is escaped here, where the data
+    // enters, not where it is displayed (F16).
+    if (body && body.detail) detail = " — " + esc(body.detail);
   } catch (e) { /* non-JSON error body */ }
-  return "<code>" + url + "</code> returned <b>" + res.status + "</b>" + detail;
+  return "<code>" + esc(url) + "</code> returned <b>" + esc(res.status) + "</b>" + detail;
 }
 
 function widestLayer(layers) {
@@ -1084,7 +1087,9 @@ function buildScenePicker(manifest, current) {
     row.type = "button";
     row.className = "sceneRow" + (sc.slug === current ? " active" : "");
     if (sc.slug === current) row.setAttribute("aria-current", "true");
-    row.innerHTML = `${sc.label}<small>${describeScene(sc)}</small>`;
+    // describeScene() returns plain text, so both halves are data to be escaped —
+    // the <small> wrapper is the only markup here (F16).
+    row.innerHTML = `${esc(sc.label)}<small>${esc(describeScene(sc))}</small>`;
     // Full reload on change: init() builds the map and closures exactly once,
     // and a clean reload is simpler and safer than tearing all of that down.
     row.addEventListener("click", () => {
@@ -1152,7 +1157,7 @@ async function boot() {
 boot()
   .then(data => { init(data); showSource(data, loadState); })
   .catch(err => {
-    banner("Nothing could be loaded. " + String(err.message || err), true);
+    banner("Nothing could be loaded. " + esc(String(err.message || err)), true);
   });
 
 /* ---- Home view -------------------------------------------------
@@ -1324,7 +1329,7 @@ function init(data) {
     try {
       map.addControl(overlay);
     } catch (e) {
-      banner("Basemap overlay failed to attach: " + e.message +
+      banner("Basemap overlay failed to attach: " + esc(e.message) +
              ". Trails cannot draw, though the data loaded fine.", true);
     }
   }
@@ -1332,7 +1337,7 @@ function init(data) {
   map.on("load", attachOverlay);
   map.on("error", e => {
     const msg = (e && e.error && e.error.message) || "unknown error";
-    banner("Basemap failed to load (<code>" + msg + "</code>). " +
+    banner("Basemap failed to load (<code>" + esc(msg) + "</code>). " +
            "The replay clock keeps running; map tiles and trails may be missing.", false);
   });
   // The animation loop is kicked off at the end of init(), NOT here: `animate` closes
