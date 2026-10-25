@@ -131,3 +131,39 @@ def test_a_request_that_waits_too_long_is_503_not_500(client, app_module, monkey
     assert r.json()["detail"] == (
         "database busy: no connection became free within 0.1 s. Try again shortly.")
     assert client.get("/api/trips", params=WINDOW).status_code == 200   # slot handed back
+
+
+# ---------------------------------------------------------------- DSN label (F18)
+
+@pytest.mark.parametrize("dsn, label", [
+    ("host=localhost port=5432 user=bob password=secret dbname=sillage",
+     "host=localhost port=5432 dbname=sillage"),
+    ("postgresql://bob:secret@db.example.com:5433/sillage",
+     "host=db.example.com port=5433 dbname=sillage"),
+    ("dbname=sillage", "dbname=sillage"),
+    ("", "(default)"),
+    ("not a dsn", "(unparseable)"),
+])
+def test_dsn_label_keeps_only_host_port_dbname(app_module, dsn, label):
+    assert app_module.dsn_label(dsn) == label
+
+
+@pytest.mark.parametrize("dsn", [
+    "host=localhost user=bob password=hunter2 dbname=sillage",
+    "postgresql://bob:hunter2@localhost/sillage",
+])
+def test_dsn_label_never_reveals_the_user_or_password(app_module, dsn):
+    label = app_module.dsn_label(dsn)
+    assert "hunter2" not in label
+    assert "bob" not in label
+    assert "password" not in label
+
+
+def test_health_does_not_publish_the_password(client, app_module, monkeypatch):
+    # Warm the pool first: the bogus password must never be used to connect.
+    assert client.get("/api/health").status_code == 200
+    monkeypatch.setattr(app_module, "PG_DSN", app_module.PG_DSN + " password=hunter2")
+    body = client.get("/api/health").json()
+    assert body["database"] == "up"
+    assert "hunter2" not in body["dsn"]
+    assert "password" not in body["dsn"]

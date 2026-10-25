@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import psycopg2
+from psycopg2 import extensions as pgext
 from psycopg2 import pool as pgpool
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,6 +77,25 @@ app.add_middleware(
 
 # ---------------------------------------------------------------- database
 
+def dsn_label(dsn):
+    """The connection string reduced to what is safe to put in a response (F18).
+
+    `PG_DSN` is free-form libpq and may carry `password=...` — or `user:password@` in the
+    URI spelling — so it is never echoed as it stands. Only host, port and dbname survive,
+    in that order; user, password and everything else are dropped. `parse_dsn` reads both
+    spellings, and a string it cannot read is reported as such rather than guessed at.
+
+    The Kotlin service builds the same label from the same three keys, so `/api/health`
+    answers identically on both (`dsnLabel` in api-kotlin/.../Database.kt).
+    """
+    try:
+        parsed = pgext.parse_dsn(dsn)
+    except psycopg2.Error:
+        return "(unparseable)"
+    kept = [f"{key}={parsed[key]}" for key in ("host", "port", "dbname") if parsed.get(key)]
+    return " ".join(kept) or "(default)"
+
+
 # Built lazily so the app still boots (and still serves web/) when Postgres is down.
 _POOL = None
 
@@ -103,8 +123,9 @@ def db_conn():
     try:
         pool = _get_pool()
     except psycopg2.OperationalError as e:
-        raise HTTPException(status_code=503,
-                            detail=f"cannot connect to PostgreSQL ({PG_DSN}): {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"cannot connect to PostgreSQL ({dsn_label(PG_DSN)}): {e}")
 
     if not _SLOTS.acquire(timeout=POOL_WAIT_SEC):
         raise HTTPException(
@@ -384,7 +405,7 @@ def api_health():
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
                 cur.fetchone()
-        return {"status": "ok", "database": "up", "dsn": PG_DSN}
+        return {"status": "ok", "database": "up", "dsn": dsn_label(PG_DSN)}
     except HTTPException as e:
         return JSONResponse(status_code=503,
                             content={"status": "degraded", "database": "down",

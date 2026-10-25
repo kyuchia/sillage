@@ -1,6 +1,7 @@
 package sillage
 
 import java.net.URI
+import java.net.URISyntaxException
 import java.net.URLDecoder
 import java.sql.Connection
 import java.sql.SQLException
@@ -94,6 +95,32 @@ fun libpqToJdbc(dsn: String, env: Map<String, String> = System.getenv()): JdbcTa
     kv["application_name"]?.let { props["ApplicationName"] = it }
 
     return JdbcTarget("jdbc:postgresql://$host:$port/$dbname", props)
+}
+
+/**
+ * The connection string reduced to what is safe to put in a response (F18).
+ *
+ * `PG_DSN` is free-form libpq and may carry `password=...` — or `user:password@` in the
+ * URI spelling — so it is never echoed as it stands. Only host, port and dbname survive,
+ * in that order; user, password and everything else are dropped. A string neither branch
+ * can read is reported as such rather than guessed at.
+ *
+ * Deliberately identical to `dsn_label` in api/main.py, down to the `(default)` and
+ * `(unparseable)` spellings, so `/api/health` answers the same on both services.
+ */
+fun dsnLabel(dsn: String): String {
+    val kv = try {
+        if (dsn.startsWith("postgres://") || dsn.startsWith("postgresql://")) parseUri(dsn)
+        else parseKeywords(dsn)
+    } catch (e: IllegalArgumentException) {
+        return "(unparseable)"          // parseKeywords' require(): no "=", unterminated quote
+    } catch (e: URISyntaxException) {
+        return "(unparseable)"
+    }
+    val kept = listOf("host", "port", "dbname").mapNotNull { key ->
+        kv[key]?.takeIf { it.isNotEmpty() }?.let { "$key=$it" }
+    }
+    return if (kept.isEmpty()) "(default)" else kept.joinToString(" ")
 }
 
 /** libpq `key=value` pairs; values may be single-quoted with \' and \\ escapes. */
