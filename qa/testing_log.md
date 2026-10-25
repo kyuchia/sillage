@@ -25,14 +25,14 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F3 | start after end → 404 "no data" | low | fixed |
 | F4 | hours ≤ 0 accepted, reads as an empty future window | low | fixed |
 | F5 | 400 responses echo the generated SQL | low | fixed |
-| F6 | Two different answers for "nothing to draw" | decision | open |
+| F6 | Two different answers for "nothing to draw" | decision | kept — both answers are intended |
 | F7 | Offset-less timestamps depend on the server's TimeZone | medium | fixed |
 | F8 | Point budget is enforced only after every row is fetched | high | fixed |
 | F9 | Duplicate fixes reach the payload | decision | kept — 0 in the archive |
 | F10 | `route` documented as bus-only, also filters simulated layers | low | fixed |
 | F11 | `null_island` check used `= 0` and missed every real null-island fix | — | fixed |
-| F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | open |
-| F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | open |
+| F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | kept — positions are right, timing is off |
+| F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | kept — README makes no "continuous" claim |
 | F14 | More than 8 concurrent requests → 500 "connection pool exhausted" (Python) | high | fixed |
 
 ### F1 — unparseable timestamp on a simulated layer is a 500
@@ -102,6 +102,10 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 - The plan that started this pass expected `200 + []` for an empty window; the API
   deliberately documents 404, and the frontend reports non-200s in its status line.
   Changing either side is a contract decision, so nothing was changed.
+- **Decision (2026-10-25): kept.** Both answers are intended: 404 says the window
+  holds no rows, 200 with `"trips": []` says rows exist but none survive
+  `min_points`. The two characterisation tests pin both behaviours, and the frontend
+  handles both. No contract change.
 
 ### F7 — offset-less timestamps follow the server's TimeZone
 
@@ -410,9 +414,9 @@ baseline for the load tests and for F8.
   midnight-UTC explanation does not cover. Not investigated further.
 - A gap is only visible here if a whole clock hour is empty, so shorter outages are
   not counted — 28 hours is a floor.
-- **Docs**: the README and v14 call the August run "continuous". It is continuous in
-  the sense of one run with no dormancy, but not hour by hour. Wording is the
-  owner's call; nothing in the README was changed.
+- **Decision (2026-10-25): kept.** The README no longer calls the run continuous; it
+  says the archive was collected "with gaps between recording periods". The
+  hour-by-hour gaps are recorded here, which is enough. No README change.
 
 ### F11 — the null-island check used `= 0` (fixed)
 
@@ -449,8 +453,10 @@ baseline for the load tests and for F8.
   "teleports" in SQL would throw away good positions. The map already copes —
   `buildSpeeds()` replaces implausible segment speeds. For sonification, where
   timing is the point, this is worth knowing before scheduling arrivals.
-- **Open**: whether to store the per-vehicle GPS timestamp if recording ever
-  restarts; whether to drop only spikes.
+- **Decision (2026-10-25): kept.** No rows are deleted, spikes included: the map
+  already replaces implausible segment speeds, and the spikes are ~5% of jumps.
+  Recording has ended, so storing the per-vehicle GPS timestamp is a note for any
+  future recording, not a change now.
 - Aircraft teleports (2,067) not yet classified; OpenSky has the same poll-time
   vs. position-time split (`state_time` is the snapshot time).
 
