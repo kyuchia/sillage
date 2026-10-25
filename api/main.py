@@ -104,7 +104,11 @@ def dsn_label(dsn):
 
 
 # Built lazily so the app still boots (and still serves web/) when Postgres is down.
+# The lock matters because FastAPI runs this sync code on ~40 threads: two first
+# requests arriving together would otherwise each build a pool, and the one that lost
+# the assignment would be left holding an open connection nobody ever closes.
 _POOL = None
+_POOL_LOCK = threading.Lock()
 
 # psycopg2's pool raises PoolError the moment all its connections are out, and FastAPI
 # runs this sync code on ~40 threads, so a 9th overlapping request used to be a 500
@@ -115,7 +119,10 @@ _SLOTS = threading.BoundedSemaphore(POOL_SIZE)
 def _get_pool():
     global _POOL
     if _POOL is None:
-        _POOL = pgpool.ThreadedConnectionPool(minconn=1, maxconn=POOL_SIZE, dsn=PG_DSN)
+        with _POOL_LOCK:
+            if _POOL is None:          # another thread may have built it while we waited
+                _POOL = pgpool.ThreadedConnectionPool(minconn=1, maxconn=POOL_SIZE,
+                                                      dsn=PG_DSN)
     return _POOL
 
 
@@ -448,9 +455,12 @@ def _over_budget_detail(what):
 def api_range():
     """Report what data actually exists, so the client can pick a sane default window.
 
-    Includes `overlap`, the window where every layer has data at once. The bus and
-    aircraft tables currently intersect for only ~1.7 hours, so defaulting to the bus
-    range alone would render an empty aircraft layer and look like a bug.
+    Includes `overlap`, the window where every layer has data at once. The two recorded
+    tables are filled by separate fetchers and need not span the same period, so a client
+    that defaulted to the bus range alone could render an empty aircraft layer and look
+    like a bug. How wide the overlap actually is depends on the archive in the database;
+    the client decides what to do with it (see the MAX_DERIVED_HOURS note in
+    docs/index.html).
     """
     with db_conn() as conn:
         return get_range(conn)
