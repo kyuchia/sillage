@@ -299,8 +299,8 @@ dropping tiles it no longer needs) are not counted as failures.
 |---|---|---|---|
 | Chromium | cloud sandbox | `docs/` via `http.server`; deck.gl and MapLibre served from their npm packages and the Carto style stubbed, as the sandbox cannot reach unpkg or Carto | **19 passed, 3 skipped** |
 | Chromium, WebKit | GitHub Actions (`e2e` job, one per browser) | this checkout's `docs/` | **passed** (19 passed, 3 skipped each) |
-| Firefox | GitHub Actions, before the pref below | this checkout's `docs/` | cancelled at the 15-min job limit with no output (cause below) |
-| Firefox | Docker, `mcr.microsoft.com/playwright/python:v1.63.0-noble` on the Mac (no GPU) | this checkout's `docs/` | reproduced: `Failed to create WebGL context … Exhausted GL driver options`, test errors after 90 s |
+| Firefox | GitHub Actions | this checkout's `docs/` | cancelled at the 15-min job limit with no output (cause below); removed from the CI matrix |
+| Firefox | Docker, `mcr.microsoft.com/playwright/python:v1.63.0-noble` on the Mac (no GPU) | this checkout's `docs/` | reproduced: no WebGL context, 22 errors in 30 s once the suite failed fast |
 | Chromium, Firefox, WebKit | owner's Mac (Apple silicon), Playwright browsers Chromium 153, Firefox 155, WebKit 26.6 | `https://kyuchia.github.io/sillage/` | **57 passed, 9 skipped** (66 = 22 × 3; 5 min 8 s) |
 
 **Observations (not findings)**
@@ -313,16 +313,24 @@ dropping tiles it no longer needs) are not counted as failures.
   tests keep the default one. On a machine with a GPU this does not arise. Whether a
   visitor without hardware acceleration matters is a product question; it was not
   measured on real hardware.
-- **Firefox refuses software WebGL.** On a machine with no GPU (CI runner, Docker),
-  Firefox's blocklist will not create a WebGL context ("Exhausted GL driver options");
-  Chromium and WebKit fall back to SwiftShader. MapLibre cannot start, the page shows
-  its error line, and the suite's "ready" condition never held, so every test waited
-  out its 90 s: 22 × 90 s is past the 15-min job limit. The CI log stayed empty because
-  pytest buffers its progress line when not on a terminal, not because the browser
-  hung — an earlier version of this entry said it hung, which was wrong.
-  **Changes**: Firefox runs with `webgl.force-enabled` (lifts the blocklist; no effect
-  on a machine with a GPU); a warn/error in the status line now fails the test at once
-  with the page's message; CI runs pytest with `-v` so progress is visible.
+- **Headless Firefox has no WebGL on a Linux machine without a GPU.** MapLibre cannot
+  start, the page shows its error line, and the suite's "ready" condition never held,
+  so every test waited out its 90 s: 22 × 90 s is past the 15-minute job limit. The CI
+  log stayed empty because pytest buffers its progress line when not on a terminal.
+  An earlier version of this entry said the browser hung, which was wrong.
+  Reproduced in the Playwright Docker image and probed directly
+  (`document.createElement("canvas").getContext("webgl")`), 12 combinations, all
+  failing with `tryNativeGL () … Exhausted GL driver options`:
+  - default prefs, `webgl.force-enabled`, and that plus `webgl.out-of-process=false`;
+  - each with and without `LIBGL_ALWAYS_SOFTWARE=1`;
+  - before and after installing Mesa (it was already present: `swrast_dri.so`,
+    `libEGL_mesa.so.0`).
+  Chromium and WebKit create a context on the same machine (Chromium reports
+  SwiftShader). Headed Firefox under Xvfb hung in the same container and gave no
+  result; not pursued. **Outcome**: CI runs Chromium and WebKit, Firefox runs on the
+  Mac (57/57 non-skipped passed against the live demo). Kept from this round: a
+  warn/error in the status line now fails the test at once with the page's message,
+  and CI runs pytest with `-v`.
 - WebKit on the runner first failed the overlay check: deck.gl's canvas is attached on
   MapLibre's `load`, which waits for the first basemap tiles to be drawn, and without a
   GPU that came after the scene was ready. The check now waits up to 60 s for the

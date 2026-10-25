@@ -130,7 +130,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox, webkit]
+        # No Firefox: on a Linux runner with no GPU, headless Firefox cannot create a
+        # WebGL context, so the map cannot start. It is run locally instead
+        # (qa/testing_log.md, 2026-10-24).
+        browser: [chromium, webkit]
 
     env:
       BASE_URL: ${{ inputs.e2e_base_url || 'http://localhost:8765/' }}

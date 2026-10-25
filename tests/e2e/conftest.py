@@ -93,25 +93,11 @@ class Demo:
         # Let the basemap tiles and the deck.gl overlay settle before anything is judged.
         page.wait_for_load_state("networkidle", timeout=READY_TIMEOUT_MS)
         # A warn/error in the status line fails at once, with the page's own message,
-        # instead of being waited out (a browser without WebGL shows one straight away).
+        # instead of being waited out (a browser without WebGL shows one straight away:
+        # headless Firefox on a Linux machine with no GPU, see qa/testing_log.md).
         level = page.locator("#dial").get_attribute("data-level")
         if level:
             pytest.fail(f"status line is {level}: {page.locator('#banner').text_content()}")
-
-
-@pytest.fixture(scope="session")
-def browser_type_launch_args(browser_type_launch_args, browser_name):
-    """Firefox: allow software WebGL.
-
-    Chromium and WebKit fall back to a software WebGL on a machine with no GPU (CI
-    runners, Docker). Firefox's blocklist refuses it ("Exhausted GL driver options"),
-    so MapLibre cannot start and the page shows its error line. This pref lifts the
-    blocklist; on a machine with a GPU it changes nothing.
-    """
-    if browser_name == "firefox":
-        prefs = {**browser_type_launch_args.get("firefox_user_prefs", {}), "webgl.force-enabled": True}
-        return {**browser_type_launch_args, "firefox_user_prefs": prefs}
-    return browser_type_launch_args
 
 
 @pytest.fixture(params=list(VIEWPORTS), ids=list(VIEWPORTS))
