@@ -334,8 +334,9 @@ def get_range(conn):
 
     The overlap matters when the two tables do not span the same period: a client that
     defaults its window to the bus range alone would then show an empty aircraft layer
-    and look broken. Since both fetchers run continuously the overlap is now nearly the
-    whole range, which is why the client also caps a derived window by duration.
+    and look broken. Its width is a property of the archive, not of this query — it can
+    be a couple of hours or most of the range — so the client never trusts it as a window
+    on its own and caps a derived one by duration.
     """
     layers = {}
     bounds = []

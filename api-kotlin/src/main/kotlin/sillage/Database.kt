@@ -1,6 +1,7 @@
 package sillage
 
 import java.net.URI
+import java.net.URISyntaxException
 import java.net.URLDecoder
 import java.sql.Connection
 import java.sql.SQLException
@@ -46,16 +47,59 @@ class Database(
             throw ApiException(503, "cannot connect to PostgreSQL ($dsnLabel): ${e.message}")
         }
         conn.use { c ->
-            c.autoCommit = false
             try {
+                c.autoCommit = false
                 c.createStatement().use { it.execute("SET LOCAL TIME ZONE '${MONTREAL.id}'") }
                 return block(c)
+            } catch (e: SQLException) {
+                // The server went away after the pool was warm: Hikari's borrow-time
+                // validation has a 500 ms bypass window, so a just-used connection is
+                // handed back unchecked and fails here. That is 503 (unavailable), not
+                // 500 (a bug in this service) — same as db_conn() in api/main.py (F17).
+                if (isConnectionError(e)) {
+                    throw ApiException(503, "database unavailable ($dsnLabel): ${firstLine(e)}")
+                }
+                throw e
             } finally {
-                c.rollback()
+                // A rollback on a dead connection throws in its own right, and Hikari's
+                // proxy answers "Connection is closed" with no SQLState at all. Either
+                // would replace the error that brought us here, so it is swallowed: the
+                // connection is on its way back to the pool to be discarded regardless.
+                try {
+                    c.rollback()
+                } catch (e: SQLException) {
+                    // nothing left to clean up
+                }
             }
         }
     }
 }
+
+/** Postgres states that mean the server is going or gone: admin shutdown, crash shutdown, cannot connect now. */
+private val OUTAGE_STATES = setOf("57P01", "57P02", "57P03")
+
+/**
+ * Does this SQLException mean the connection itself is gone, rather than the statement
+ * being wrong?
+ *
+ * Class 08 is the standard's "connection exception", and these three are the only
+ * members of class 57 that are outages — 57014 is query_canceled, a statement outcome.
+ */
+internal fun isConnectionError(e: SQLException): Boolean {
+    var cause: Throwable? = e
+    while (cause != null) {
+        if (cause is SQLException) {
+            val state = cause.sqlState
+            if (state != null && (state.startsWith("08") || state in OUTAGE_STATES)) return true
+        }
+        cause = cause.cause
+    }
+    return false
+}
+
+/** The first line of an exception's message, as Python's `splitlines()[0]` takes it. */
+internal fun firstLine(e: SQLException): String =
+    e.message?.trim()?.lineSequence()?.firstOrNull()?.takeIf { it.isNotEmpty() } ?: e.toString()
 
 /** Seconds the way Python's `{:g}` writes them: 3000 → "3", 100 → "0.1". */
 internal fun seconds(millis: Long): String =
@@ -94,6 +138,32 @@ fun libpqToJdbc(dsn: String, env: Map<String, String> = System.getenv()): JdbcTa
     kv["application_name"]?.let { props["ApplicationName"] = it }
 
     return JdbcTarget("jdbc:postgresql://$host:$port/$dbname", props)
+}
+
+/**
+ * The connection string reduced to what is safe to put in a response (F18).
+ *
+ * `PG_DSN` is free-form libpq and may carry `password=...` — or `user:password@` in the
+ * URI spelling — so it is never echoed as it stands. Only host, port and dbname survive,
+ * in that order; user, password and everything else are dropped. A string neither branch
+ * can read is reported as such rather than guessed at.
+ *
+ * Deliberately identical to `dsn_label` in api/main.py, down to the `(default)` and
+ * `(unparseable)` spellings, so `/api/health` answers the same on both services.
+ */
+fun dsnLabel(dsn: String): String {
+    val kv = try {
+        if (dsn.startsWith("postgres://") || dsn.startsWith("postgresql://")) parseUri(dsn)
+        else parseKeywords(dsn)
+    } catch (e: IllegalArgumentException) {
+        return "(unparseable)"          // parseKeywords' require(): no "=", unterminated quote
+    } catch (e: URISyntaxException) {
+        return "(unparseable)"
+    }
+    val kept = listOf("host", "port", "dbname").mapNotNull { key ->
+        kv[key]?.takeIf { it.isNotEmpty() }?.let { "$key=$it" }
+    }
+    return if (kept.isEmpty()) "(default)" else kept.joinToString(" ")
 }
 
 /** libpq `key=value` pairs; values may be single-quoted with \' and \\ escapes. */

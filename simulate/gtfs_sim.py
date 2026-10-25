@@ -50,6 +50,19 @@ WEEKDAY_COLS = ["monday", "tuesday", "wednesday", "thursday",
                 "friday", "saturday", "sunday"]
 
 
+class OverBudget(Exception):
+    """Raised before any sampling when a window's candidate points exceed the budget.
+
+    The counterpart to trips_query.OverBudgetError on the recorded side: a schedule can
+    be materialised for any instant, so without this a wide window is sampled in full
+    and only then refused (F15).
+    """
+
+    def __init__(self, budget):
+        self.budget = budget
+        super().__init__(f"more than {budget:,} points would be sampled for this window")
+
+
 # ----------------------------------------------------------------- loading
 
 def _rows(zf, name):
@@ -416,12 +429,17 @@ def load_gtfs(zip_path, route_types):
 
 
 def simulate(mode, start_dt, end_dt, interval=20, gtfs_dir=None, route=None,
-             verbose=True):
+             verbose=True, max_points=None):
     """Materialise one mode over an absolute wall-clock window.
 
     Returns (trips, stats). Each trip is
         {"mode", "id", "label", "path": [[lon,lat],...], "times": [datetime,...]}
     with absolute datetimes; the caller re-bases them onto a shared timeline.
+
+    `max_points` caps how many sample points this call may produce, raising OverBudget
+    as soon as the candidates exceed it — before any sampling (F15). None means no cap,
+    which is what the CLI wants: writing a huge file to disk is a legitimate thing to ask
+    for, exactly as with the CLI's uncapped database export.
     """
     cfg = MODES[mode]
     zip_path = _latest_zip(cfg["agency"], gtfs_dir)
@@ -443,6 +461,7 @@ def simulate(mode, start_dt, end_dt, interval=20, gtfs_dir=None, route=None,
         d += timedelta(days=1)
 
     out = []
+    candidate_points = 0
     for day in days:
         eff = effective_date(gtfs, day, verbose=verbose)
         service_ids = resolve_service_ids(gtfs, eff)
@@ -469,6 +488,19 @@ def simulate(mode, start_dt, end_dt, interval=20, gtfs_dir=None, route=None,
             if t0 is None or t1 is None or t1 < lo or t0 > hi:
                 continue          # cheap reject before the expensive projection
             stats["trips_considered"] += 1
+
+            # What this trip could contribute, counted before anything is projected:
+            # the grid samples where its own span overlaps the window. These are
+            # CANDIDATE points, as in F8's row count — a trip later dropped for having
+            # no shape or no profile, or for yielding fewer than two samples, still
+            # counts — so the total is an upper bound on the payload, and a refusal
+            # costs no sampling at all (F15).
+            if max_points is not None:
+                a = max(t0, math.ceil(lo / interval) * interval)
+                b = min(t1, hi)
+                candidate_points += int((b - a) // interval) + 1 if a <= b else 0
+                if candidate_points > max_points:
+                    raise OverBudget(max_points)
 
             if not trip.get("shape_id"):
                 stats["no_shape"] += 1

@@ -2,6 +2,7 @@
 /api/range, /api/health, the static mounts and CORS.
 """
 
+import psycopg2
 import pytest
 
 from conftest import SEED, parse
@@ -74,6 +75,54 @@ def test_page_is_still_served_when_postgres_is_down(client, database_down):
     assert client.get("/docs/").status_code == 200
 
 
+def _terminate_pooled_backends(app_module):
+    """Kill exactly the server-side sessions the pool is holding idle, and nothing else.
+
+    Other fixtures share this database, so the pids come from the pool's own idle list
+    rather than from pg_stat_activity.
+    """
+    pids = [c.get_backend_pid() for c in list(app_module._POOL._pool) if not c.closed]
+    killer = psycopg2.connect(app_module.PG_DSN)
+    try:
+        killer.autocommit = True
+        with killer.cursor() as cur:
+            for pid in pids:
+                cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+    finally:
+        killer.close()
+    return pids
+
+
+def test_health_degrades_to_503_when_postgres_dies_after_startup(client, app_module):
+    """F17: the pool is warm, so the failure lands mid-request, not at connect time."""
+    assert client.get("/api/health").status_code == 200
+    assert _terminate_pooled_backends(app_module), "the pool held no idle connection to kill"
+
+    r = client.get("/api/health")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["status"] == "degraded" and body["database"] == "down"
+    # The cleanup rollback must not have replaced the real error.
+    assert "connection already closed" not in body["detail"]
+    assert "InterfaceError" not in body["detail"]
+
+
+def test_a_dead_pooled_connection_is_discarded_not_reused(client, app_module):
+    assert client.get("/api/health").status_code == 200
+    _terminate_pooled_backends(app_module)
+    assert client.get("/api/health").status_code == 503
+    assert client.get("/api/health").status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/api/range", "/api/trips?layer=bus"])
+def test_data_endpoints_answer_503_when_postgres_dies_after_startup(client, app_module, path):
+    assert client.get("/api/health").status_code == 200
+    _terminate_pooled_backends(app_module)
+    r = client.get(path)
+    assert r.status_code == 503
+    assert "database unavailable" in r.json()["detail"]
+
+
 # ---------------------------------------------------------------- static + CORS
 
 def test_root_redirects_to_the_page(client):
@@ -131,3 +180,39 @@ def test_a_request_that_waits_too_long_is_503_not_500(client, app_module, monkey
     assert r.json()["detail"] == (
         "database busy: no connection became free within 0.1 s. Try again shortly.")
     assert client.get("/api/trips", params=WINDOW).status_code == 200   # slot handed back
+
+
+# ---------------------------------------------------------------- DSN label (F18)
+
+@pytest.mark.parametrize("dsn, label", [
+    ("host=localhost port=5432 user=bob password=secret dbname=sillage",
+     "host=localhost port=5432 dbname=sillage"),
+    ("postgresql://bob:secret@db.example.com:5433/sillage",
+     "host=db.example.com port=5433 dbname=sillage"),
+    ("dbname=sillage", "dbname=sillage"),
+    ("", "(default)"),
+    ("not a dsn", "(unparseable)"),
+])
+def test_dsn_label_keeps_only_host_port_dbname(app_module, dsn, label):
+    assert app_module.dsn_label(dsn) == label
+
+
+@pytest.mark.parametrize("dsn", [
+    "host=localhost user=bob password=hunter2 dbname=sillage",
+    "postgresql://bob:hunter2@localhost/sillage",
+])
+def test_dsn_label_never_reveals_the_user_or_password(app_module, dsn):
+    label = app_module.dsn_label(dsn)
+    assert "hunter2" not in label
+    assert "bob" not in label
+    assert "password" not in label
+
+
+def test_health_does_not_publish_the_password(client, app_module, monkeypatch):
+    # Warm the pool first: the bogus password must never be used to connect.
+    assert client.get("/api/health").status_code == 200
+    monkeypatch.setattr(app_module, "PG_DSN", app_module.PG_DSN + " password=hunter2")
+    body = client.get("/api/health").json()
+    assert body["database"] == "up"
+    assert "hunter2" not in body["dsn"]
+    assert "password" not in body["dsn"]

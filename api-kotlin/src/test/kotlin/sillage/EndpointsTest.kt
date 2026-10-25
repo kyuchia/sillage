@@ -3,6 +3,7 @@ package sillage
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.params.ParameterizedTest
@@ -107,5 +108,51 @@ class DatabaseDownTest : ApiTestBase() {
         val r = get(path, mapOf("layer" to "bus"))
         assertEquals(503, r.status)
         assert("cannot connect to PostgreSQL" in r.detail) { r.detail }
+    }
+}
+
+/**
+ * F17: Postgres goes away *after* the pool is warm. Hikari's borrow-time validation has
+ * a bypass window for a connection used moments ago, so the failure lands inside
+ * readOnly() rather than at borrow time. Mirrors
+ * test_health_degrades_to_503_when_postgres_dies_after_startup in tests/api/.
+ */
+@MicronautTest
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class DatabaseDiesMidLifeTest : ApiTestBase() {
+
+    /** A distinctive application_name so the test can find this app's own sessions. */
+    override fun dsn() = "${TestDatabase.dsn} application_name=$APP_NAME"
+
+    @Test
+    fun `health degrades to 503 when the server goes away, then recovers`() {
+        assertEquals(200, get("/api/health").status)
+        assertTrue(terminateAppBackends() > 0, "the pool held no session to terminate")
+
+        val r = get("/api/health")
+        assertEquals(503, r.status, r.text)
+        assertEquals("degraded", r.json["status"].asText())
+        assertEquals("down", r.json["database"].asText())
+
+        // The dead connection was discarded rather than handed out again.
+        assertEquals(200, get("/api/health").status)
+    }
+
+    /** Only this application's own sessions: the other test classes share the database. */
+    private fun terminateAppBackends(): Int =
+        TestDatabase.connect().use { c ->
+            c.autoCommit = true
+            c.prepareStatement(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = ?"
+            ).use { ps ->
+                ps.setString(1, APP_NAME)
+                var terminated = 0
+                ps.executeQuery().use { rs -> while (rs.next()) terminated++ }
+                terminated
+            }
+        }
+
+    companion object {
+        const val APP_NAME = "sillage-f17-dies-mid-life"
     }
 }

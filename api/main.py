@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import psycopg2
+from psycopg2 import extensions as pgext
 from psycopg2 import pool as pgpool
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,6 +55,13 @@ PG_DSN = os.environ.get("PG_DSN", "dbname=sillage")
 # writing a huge file to disk is a legitimate thing to want.
 MAX_POINTS = int(os.environ.get("MTL_MAX_POINTS", 400_000))
 
+# How wide a window the simulated layers will materialise. Unlike a database query, a
+# schedule exists for any instant, so a year-wide request is not empty — it is thousands
+# of service days, each scanning every trip in the feed. The point budget below bounds
+# the output; this bounds the work done to discover it (F15). 48 h is well past any
+# window the page asks for and still a fraction of a second of scanning.
+MAX_SIM_HOURS = float(os.environ.get("MTL_MAX_SIM_HOURS", 48))
+
 # Requests wait this long for a free database connection before a 503 (F14). The same
 # 3 s as the Kotlin service's Hikari connectionTimeout, so both behave alike under load.
 POOL_SIZE = 8
@@ -76,8 +84,31 @@ app.add_middleware(
 
 # ---------------------------------------------------------------- database
 
+def dsn_label(dsn):
+    """The connection string reduced to what is safe to put in a response (F18).
+
+    `PG_DSN` is free-form libpq and may carry `password=...` — or `user:password@` in the
+    URI spelling — so it is never echoed as it stands. Only host, port and dbname survive,
+    in that order; user, password and everything else are dropped. `parse_dsn` reads both
+    spellings, and a string it cannot read is reported as such rather than guessed at.
+
+    The Kotlin service builds the same label from the same three keys, so `/api/health`
+    answers identically on both (`dsnLabel` in api-kotlin/.../Database.kt).
+    """
+    try:
+        parsed = pgext.parse_dsn(dsn)
+    except psycopg2.Error:
+        return "(unparseable)"
+    kept = [f"{key}={parsed[key]}" for key in ("host", "port", "dbname") if parsed.get(key)]
+    return " ".join(kept) or "(default)"
+
+
 # Built lazily so the app still boots (and still serves web/) when Postgres is down.
+# The lock matters because FastAPI runs this sync code on ~40 threads: two first
+# requests arriving together would otherwise each build a pool, and the one that lost
+# the assignment would be left holding an open connection nobody ever closes.
 _POOL = None
+_POOL_LOCK = threading.Lock()
 
 # psycopg2's pool raises PoolError the moment all its connections are out, and FastAPI
 # runs this sync code on ~40 threads, so a 9th overlapping request used to be a 500
@@ -88,7 +119,10 @@ _SLOTS = threading.BoundedSemaphore(POOL_SIZE)
 def _get_pool():
     global _POOL
     if _POOL is None:
-        _POOL = pgpool.ThreadedConnectionPool(minconn=1, maxconn=POOL_SIZE, dsn=PG_DSN)
+        with _POOL_LOCK:
+            if _POOL is None:          # another thread may have built it while we waited
+                _POOL = pgpool.ThreadedConnectionPool(minconn=1, maxconn=POOL_SIZE,
+                                                      dsn=PG_DSN)
     return _POOL
 
 
@@ -99,12 +133,18 @@ def db_conn():
     Every query here is read-only, so the transaction is rolled back on the way out
     either way — otherwise a connection returns to the pool holding an idle
     transaction, or a failed one that poisons the next request that borrows it.
+
+    A database that dies *after* the pool was built fails here rather than at connect
+    time, so those errors are converted too: the pool hands back a connection whose
+    server is gone and the first statement on it raises (F17). Every such failure is a
+    503, never a 500, and the dead connection is closed rather than pooled again.
     """
     try:
         pool = _get_pool()
     except psycopg2.OperationalError as e:
-        raise HTTPException(status_code=503,
-                            detail=f"cannot connect to PostgreSQL ({PG_DSN}): {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"cannot connect to PostgreSQL ({dsn_label(PG_DSN)}): {e}")
 
     if not _SLOTS.acquire(timeout=POOL_WAIT_SEC):
         raise HTTPException(
@@ -113,16 +153,36 @@ def db_conn():
                     f"{POOL_WAIT_SEC:g} s. Try again shortly."),
         )
     try:
-        conn = pool.getconn()
+        try:
+            conn = pool.getconn()
+        except psycopg2.OperationalError as e:
+            # The pool had nothing idle and opening a new connection failed.
+            raise HTTPException(
+                status_code=503,
+                detail=f"cannot connect to PostgreSQL ({dsn_label(PG_DSN)}): {e}") from e
+
+        broken = False
         try:
             use_montreal_time(conn)
             yield conn
-            conn.rollback()
-        except Exception:
-            conn.rollback()
-            raise
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            # The server went away mid-request: this connection is unusable, and the
+            # answer is 503 (unavailable), not 500 (a bug here).
+            broken = True
+            raise HTTPException(
+                status_code=503,
+                detail=(f"database unavailable ({dsn_label(PG_DSN)}): "
+                        f"{str(e).strip().splitlines()[0]}"),
+            ) from e
         finally:
-            pool.putconn(conn)
+            # One rollback for both paths. On a connection whose server is gone it
+            # raises in its own right, and that must never replace the error that
+            # brought us here — nor leave the connection to be handed out again.
+            try:
+                conn.rollback()
+            except psycopg2.Error:
+                broken = True
+            pool.putconn(conn, close=broken or bool(conn.closed))
     finally:
         _SLOTS.release()
 
@@ -184,24 +244,36 @@ def _sim_window(start, end, hours):
     """Resolve the absolute window the simulator needs.
 
     Unlike a DB query, a schedule can be materialised for any instant in history, so an
-    unbounded request has no natural answer — it is rejected rather than guessed at.
+    unbounded request has no natural answer — it is rejected rather than guessed at, and
+    so is one wider than MAX_SIM_HOURS (F15).
     """
     if start and end:
         try:
-            return gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
+            lo, hi = gtfs_sim.parse_dt(start), gtfs_sim.parse_dt(end)
         except SystemExit as e:
             # parse_dt is shared with the CLI, where SystemExit is the right exit;
             # here it is a bad parameter, not a server error (F1)
             raise HTTPException(status_code=400,
                                 detail=f"bad query parameter: {str(e).lstrip('❌ ')}")
-    if hours is not None:
+    elif hours is not None:
         now = datetime.now(gtfs_sim.TZ)
-        return now - timedelta(hours=hours), now
-    raise HTTPException(
-        status_code=400,
-        detail=("simulated layers (metro, train, rem) need an explicit window: "
-                "pass start and end, or hours"),
-    )
+        lo, hi = now - timedelta(hours=hours), now
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=("simulated layers (metro, train, rem) need an explicit window: "
+                    "pass start and end, or hours"),
+        )
+
+    span_hours = (hi - lo).total_seconds() / 3600
+    if span_hours > MAX_SIM_HOURS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"simulated layers (metro, train, rem) accept at most "
+                    f"{MAX_SIM_HOURS:g} hours per request; this window is "
+                    f"{round(span_hours, 1):g} hours. Narrow start/end or hours."),
+        )
+    return lo, hi
 
 
 def _add_simulated(payload, sim_layers, start, end, hours, route):
@@ -217,13 +289,26 @@ def _add_simulated(payload, sim_layers, start, end, hours, route):
     """
     lo, hi = _sim_window(start, end, hours)
 
+    # Whatever the recorded layers already spent is not available to the schedules: the
+    # budget is for the merged payload, so each mode is given only what is left (F15).
+    remaining = MAX_POINTS
+    if payload is not None:
+        remaining -= sum(len(t["path"]) for t in payload["trips"])
+
     sim_trips = []
     for mode in sim_layers:
         try:
-            trips, _stats = gtfs_sim.simulate(mode, lo, hi, route=route, verbose=False)
+            trips, _stats = gtfs_sim.simulate(mode, lo, hi, route=route, verbose=False,
+                                              max_points=remaining)
+        except gtfs_sim.OverBudget:
+            # Refused before sampling, so the message names what the query matches
+            # rather than what was built — the same wording as the recorded layers.
+            raise HTTPException(status_code=413, detail=_over_budget_detail(
+                f"more than {MAX_POINTS:,} points match this query, which"))
         except SystemExit as e:
             # _latest_zip raises SystemExit when a feed was never archived
             raise HTTPException(status_code=503, detail=str(e))
+        remaining -= sum(len(tr["path"]) for tr in trips)
         sim_trips.extend(trips)
 
     if not sim_trips and payload is None:
@@ -346,8 +431,10 @@ def api_trips(
             detail=f"no data for this query (empty layers: {', '.join(empty)})",
         )
 
-    # Recorded rows were checked before fetching; this still catches simulated layers,
-    # which are generated in memory, pushing the combined payload over the budget.
+    # A final safety net. Both sides now refuse before building anything — recorded rows
+    # are counted before the fetch (F8), simulated samples before the sampling (F15) —
+    # and both counts are upper bounds, so nothing is expected to reach this. It stays
+    # because it is the one check that sees the payload itself.
     total_points = sum(len(t["path"]) for t in payload["trips"])
     if total_points > MAX_POINTS:
         raise HTTPException(status_code=413,
@@ -368,9 +455,12 @@ def _over_budget_detail(what):
 def api_range():
     """Report what data actually exists, so the client can pick a sane default window.
 
-    Includes `overlap`, the window where every layer has data at once. The bus and
-    aircraft tables currently intersect for only ~1.7 hours, so defaulting to the bus
-    range alone would render an empty aircraft layer and look like a bug.
+    Includes `overlap`, the window where every layer has data at once. The two recorded
+    tables are filled by separate fetchers and need not span the same period, so a client
+    that defaulted to the bus range alone could render an empty aircraft layer and look
+    like a bug. How wide the overlap actually is depends on the archive in the database;
+    the client decides what to do with it (see the MAX_DERIVED_HOURS note in
+    docs/index.html).
     """
     with db_conn() as conn:
         return get_range(conn)
@@ -384,7 +474,7 @@ def api_health():
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
                 cur.fetchone()
-        return {"status": "ok", "database": "up", "dsn": PG_DSN}
+        return {"status": "ok", "database": "up", "dsn": dsn_label(PG_DSN)}
     except HTTPException as e:
         return JSONResponse(status_code=503,
                             content={"status": "degraded", "database": "down",

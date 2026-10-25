@@ -42,5 +42,9 @@ class SillageFactory {
         dataSource: HikariDataSource,
         @Value("\${sillage.pg-dsn}") dsn: String,
         @Value("\${sillage.max-points}") maxPoints: Int,
-    ): SillageService = SillageService(Database(dataSource::getConnection, dsn), maxPoints, dsn)
+    ): SillageService {
+        // Neither the 503 details nor /api/health ever see the raw DSN (F18).
+        val label = dsnLabel(dsn)
+        return SillageService(Database(dataSource::getConnection, label), maxPoints, label)
+    }
 }

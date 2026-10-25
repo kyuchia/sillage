@@ -14,13 +14,15 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gtfs_sim import (TZ, Gtfs, _metres, _secs, _service_midnight, effective_date,
-                      resolve_service_ids, simulate, to_payload, trip_stop_profile)
+from gtfs_sim import (TZ, Gtfs, OverBudget, _metres, _secs, _service_midnight,
+                      effective_date, resolve_service_ids, simulate, to_payload,
+                      trip_stop_profile)
 
 
 def build_feed(tmpdir, *, calendar_rows, calendar_dates_rows, stop_times_rows,
@@ -288,6 +290,49 @@ class TestPayloadShape(unittest.TestCase):
         self.assertEqual(t["label"], "R1")
         self.assertEqual(len(t["path"]), len(t["timestamps"]))
         self.assertEqual(t["timestamps"][0], 0.0)
+
+
+class TestPointBudget(unittest.TestCase):
+    """F15: candidate points are counted before anything is sampled."""
+
+    def _feed(self):
+        tmp = tempfile.mkdtemp()
+        build_feed(tmp, calendar_rows=[WEEKDAY_SERVICE], calendar_dates_rows=[],
+                   trips_rows=["R1,WK,T1,S1"],
+                   stop_times_rows=["T1,08:00:00,08:00:00,ST0,1",
+                                    "T1,08:20:00,08:20:00,ST4,2"])
+        return tmp
+
+    def _sim(self, tmp, **kwargs):
+        # 08:00-08:20 on the 60 s grid: 21 samples.
+        return simulate("metro", datetime(2026, 4, 14, 8, 0, tzinfo=TZ),
+                        datetime(2026, 4, 14, 8, 20, tzinfo=TZ),
+                        interval=60, gtfs_dir=tmp, verbose=False, **kwargs)
+
+    def test_max_points_none_is_unlimited(self):
+        """The CLI path: an explicit None behaves exactly like not passing it at all."""
+        tmp = self._feed()
+        without, _ = self._sim(tmp)
+        explicit, _ = self._sim(tmp, max_points=None)
+        self.assertEqual(without, explicit)
+        self.assertEqual(len(without[0]["path"]), 21)
+
+    def test_a_budget_at_the_sample_count_is_allowed(self):
+        trips, _ = self._sim(self._feed(), max_points=21)
+        self.assertEqual(len(trips[0]["path"]), 21)
+
+    def test_one_point_short_raises_over_budget(self):
+        with self.assertRaises(OverBudget) as caught:
+            self._sim(self._feed(), max_points=20)
+        self.assertEqual(caught.exception.budget, 20)
+
+    def test_the_budget_is_spent_before_any_sampling(self):
+        """Nothing is projected onto a shape for a request that cannot be served."""
+        tmp = self._feed()
+        with unittest.mock.patch("gtfs_sim.trip_stop_profile",
+                                 side_effect=AssertionError("sampled anyway")):
+            with self.assertRaises(OverBudget):
+                self._sim(tmp, max_points=1)
 
 
 if __name__ == "__main__":

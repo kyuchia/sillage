@@ -1,6 +1,7 @@
 package sillage
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import java.time.Instant
@@ -31,6 +32,30 @@ class ParsingTest {
         assertEquals("jdbc:postgresql://h:5433/d", t.url)
         assertEquals("s@cret", t.properties["password"])
         assertEquals("require", t.properties["sslmode"])
+    }
+
+    @Test
+    fun `the DSN label keeps only host, port and dbname`() {
+        // The same five cases, and the same expected strings, as test_dsn_label_* in
+        // tests/api/test_endpoints.py: /api/health must answer identically on both services.
+        assertEquals("host=localhost port=5432 dbname=sillage",
+            dsnLabel("host=localhost port=5432 user=bob password=secret dbname=sillage"))
+        assertEquals("host=db.example.com port=5433 dbname=sillage",
+            dsnLabel("postgresql://bob:secret@db.example.com:5433/sillage"))
+        assertEquals("dbname=sillage", dsnLabel("dbname=sillage"))
+        assertEquals("(default)", dsnLabel(""))
+        assertEquals("(unparseable)", dsnLabel("not a dsn"))
+    }
+
+    @Test
+    fun `the DSN label never reveals the user or the password`() {
+        for (dsn in listOf("host=localhost user=bob password=hunter2 dbname=sillage",
+                           "postgresql://bob:hunter2@localhost/sillage")) {
+            val label = dsnLabel(dsn)
+            assertFalse(label.contains("hunter2"), dsn)
+            assertFalse(label.contains("bob"), dsn)
+            assertFalse(label.contains("password"), dsn)
+        }
     }
 
     @Test

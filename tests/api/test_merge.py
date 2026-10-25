@@ -112,14 +112,86 @@ def test_cli_exits_nonzero_on_an_empty_window(seeded_db, tmp_path):
     assert not (tmp_path / "x.json").exists()
 
 
-def test_simulated_points_can_still_push_the_payload_over_the_budget(
+# ---------------------------------------------------------------- F15: simulated budget
+
+# The synthetic metro trip runs 08:02-08:08 and is sampled on the 20 s grid: 19 points.
+SYNTHETIC_METRO_POINTS = 19
+
+
+@pytest.fixture
+def no_simulate(monkeypatch):
+    """Fail the test if the window cap let a request reach the simulator at all."""
+    import gtfs_sim
+
+    def boom(*args, **kwargs):
+        raise AssertionError("simulate() was called: the window cap ran too late")
+
+    monkeypatch.setattr(gtfs_sim, "simulate", boom)
+
+
+@pytest.fixture
+def no_sampling(monkeypatch):
+    """Fail the test if the budget check let a request reach the sampling step."""
+    import gtfs_sim
+
+    def boom(*args, **kwargs):
+        raise AssertionError("trip_stop_profile() was called: the budget check ran too late")
+
+    monkeypatch.setattr(gtfs_sim, "trip_stop_profile", boom)
+
+
+def test_a_simulated_window_longer_than_the_cap_is_refused(client, synthetic_metro, no_simulate):
+    r = client.get("/api/trips", params={"layer": "metro",
+                                         "start": "2026-08-20 08:00-04:00",
+                                         "end": "2026-08-23 08:00-04:00"})
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert "at most 48 hours per request" in detail
+    assert "this window is 72 hours" in detail
+
+
+def test_simulated_hours_longer_than_the_cap_are_refused(client, synthetic_metro, no_simulate):
+    r = client.get("/api/trips", params={"layer": "metro", "hours": 72})
+    assert r.status_code == 400, r.text
+    assert "at most 48 hours per request" in r.json()["detail"]
+
+
+def test_a_recorded_window_is_not_capped(client, app_module, monkeypatch):
+    """The cap is a property of materialising a schedule, not of reading rows."""
+    monkeypatch.setattr(app_module, "MAX_SIM_HOURS", 1)
+    r = client.get("/api/trips", params={"layer": "bus", "start": SEED.WINDOW_START,
+                                         "end": SEED.NIGHT_END})
+    assert r.status_code == 200, r.text
+
+
+def test_the_simulated_budget_is_checked_before_sampling(
+        client, app_module, monkeypatch, synthetic_metro, no_sampling):
+    """The point of F15: refused without ever building a stop profile."""
+    budget = SYNTHETIC_METRO_POINTS - 1
+    monkeypatch.setattr(app_module, "MAX_POINTS", budget)
+    r = client.get("/api/trips", params={"layer": "metro", **WINDOW})
+    assert r.status_code == 413, r.text
+    assert f"more than {budget:,} points match this query" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("budget, status", [
+    (SYNTHETIC_METRO_POINTS, 200),
+    (SYNTHETIC_METRO_POINTS - 1, 413),
+])
+def test_the_simulated_budget_boundary_is_exact(
+        client, app_module, monkeypatch, synthetic_metro, budget, status):
+    monkeypatch.setattr(app_module, "MAX_POINTS", budget)
+    r = client.get("/api/trips", params={"layer": "metro", **WINDOW})
+    assert r.status_code == status, r.text
+
+
+def test_recorded_points_count_against_the_simulated_budget(
         client, app_module, monkeypatch, synthetic_metro):
-    # The recorded rows fit, so the pre-fetch check passes; the metro trains generated
-    # in memory then take the total over, and the after-the-fact count refuses it.
+    """The recorded rows fit on their own; the metro trip no longer has room for its
+    samples, and that is now settled before any of them are generated (F15)."""
     bus = sum(SEED.BUS_TRIPS.values()) + 2
     monkeypatch.setattr(app_module, "MAX_POINTS", bus)
     assert client.get("/api/trips", params={"layer": "bus", **WINDOW}).status_code == 200
     r = client.get("/api/trips", params={"layer": "bus,metro", **WINDOW})
     assert r.status_code == 413
-    assert "points exceeds the" in r.json()["detail"]
-    assert "more than" not in r.json()["detail"]
+    assert f"more than {bus:,} points match this query" in r.json()["detail"]
