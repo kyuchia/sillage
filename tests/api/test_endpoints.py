@@ -2,6 +2,7 @@
 /api/range, /api/health, the static mounts and CORS.
 """
 
+import psycopg2
 import pytest
 
 from conftest import SEED, parse
@@ -72,6 +73,54 @@ def test_data_endpoints_answer_503_not_500_when_postgres_is_down(client, databas
 
 def test_page_is_still_served_when_postgres_is_down(client, database_down):
     assert client.get("/docs/").status_code == 200
+
+
+def _terminate_pooled_backends(app_module):
+    """Kill exactly the server-side sessions the pool is holding idle, and nothing else.
+
+    Other fixtures share this database, so the pids come from the pool's own idle list
+    rather than from pg_stat_activity.
+    """
+    pids = [c.get_backend_pid() for c in list(app_module._POOL._pool) if not c.closed]
+    killer = psycopg2.connect(app_module.PG_DSN)
+    try:
+        killer.autocommit = True
+        with killer.cursor() as cur:
+            for pid in pids:
+                cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+    finally:
+        killer.close()
+    return pids
+
+
+def test_health_degrades_to_503_when_postgres_dies_after_startup(client, app_module):
+    """F17: the pool is warm, so the failure lands mid-request, not at connect time."""
+    assert client.get("/api/health").status_code == 200
+    assert _terminate_pooled_backends(app_module), "the pool held no idle connection to kill"
+
+    r = client.get("/api/health")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["status"] == "degraded" and body["database"] == "down"
+    # The cleanup rollback must not have replaced the real error.
+    assert "connection already closed" not in body["detail"]
+    assert "InterfaceError" not in body["detail"]
+
+
+def test_a_dead_pooled_connection_is_discarded_not_reused(client, app_module):
+    assert client.get("/api/health").status_code == 200
+    _terminate_pooled_backends(app_module)
+    assert client.get("/api/health").status_code == 503
+    assert client.get("/api/health").status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/api/range", "/api/trips?layer=bus"])
+def test_data_endpoints_answer_503_when_postgres_dies_after_startup(client, app_module, path):
+    assert client.get("/api/health").status_code == 200
+    _terminate_pooled_backends(app_module)
+    r = client.get(path)
+    assert r.status_code == 503
+    assert "database unavailable" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------- static + CORS

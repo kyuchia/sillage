@@ -119,6 +119,11 @@ def db_conn():
     Every query here is read-only, so the transaction is rolled back on the way out
     either way — otherwise a connection returns to the pool holding an idle
     transaction, or a failed one that poisons the next request that borrows it.
+
+    A database that dies *after* the pool was built fails here rather than at connect
+    time, so those errors are converted too: the pool hands back a connection whose
+    server is gone and the first statement on it raises (F17). Every such failure is a
+    503, never a 500, and the dead connection is closed rather than pooled again.
     """
     try:
         pool = _get_pool()
@@ -134,16 +139,36 @@ def db_conn():
                     f"{POOL_WAIT_SEC:g} s. Try again shortly."),
         )
     try:
-        conn = pool.getconn()
+        try:
+            conn = pool.getconn()
+        except psycopg2.OperationalError as e:
+            # The pool had nothing idle and opening a new connection failed.
+            raise HTTPException(
+                status_code=503,
+                detail=f"cannot connect to PostgreSQL ({dsn_label(PG_DSN)}): {e}") from e
+
+        broken = False
         try:
             use_montreal_time(conn)
             yield conn
-            conn.rollback()
-        except Exception:
-            conn.rollback()
-            raise
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            # The server went away mid-request: this connection is unusable, and the
+            # answer is 503 (unavailable), not 500 (a bug here).
+            broken = True
+            raise HTTPException(
+                status_code=503,
+                detail=(f"database unavailable ({dsn_label(PG_DSN)}): "
+                        f"{str(e).strip().splitlines()[0]}"),
+            ) from e
         finally:
-            pool.putconn(conn)
+            # One rollback for both paths. On a connection whose server is gone it
+            # raises in its own right, and that must never replace the error that
+            # brought us here — nor leave the connection to be handed out again.
+            try:
+                conn.rollback()
+            except psycopg2.Error:
+                broken = True
+            pool.putconn(conn, close=broken or bool(conn.closed))
     finally:
         _SLOTS.release()
 
