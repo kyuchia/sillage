@@ -27,7 +27,7 @@ The recorded-layer API also has a Kotlin/Micronaut implementation, checked again
 | API        | FastAPI; a second implementation in Kotlin with Micronaut  |
 | Simulation | Static GTFS interpolation along `shapes.txt`               |
 | Frontend   | MapLibre GL JS, deck.gl `TripsLayer` / `ScatterplotLayer`  |
-| Testing    | pytest, JUnit 5, GitHub Actions on a PostGIS container     |
+| Testing    | pytest, JUnit 5, Playwright, GitHub Actions on PostGIS     |
 
 ---
 
@@ -87,6 +87,15 @@ Tests run against a throwaway PostGIS database built from `db/schema.sql` and a 
 pip install -r requirements-dev.txt
 createdb sillage_test
 SILLAGE_TEST_DSN="dbname=sillage_test" pytest
+```
+
+End-to-end tests (`tests/e2e/`) load the static demo with Playwright in Chromium, Firefox and WebKit, at desktop and phone (390×844) sizes. They check that the map and trail overlay render, the controls, scene switching and About dialog work, nothing is logged as a console error, and every request succeeds; WebGL output is not compared pixel by pixel. CI serves this checkout's `docs/` and runs Chromium and WebKit. Firefox is run locally: on a Linux runner with no GPU, headless Firefox cannot create a WebGL context.
+
+```bash
+python -m playwright install chromium firefox webkit
+python -m http.server 8765 --directory docs &
+pytest tests/e2e --base-url http://localhost:8765/ --browser chromium --browser firefox --browser webkit
+# or against the live demo: --base-url https://kyuchia.github.io/sillage/
 ```
 
 ---
