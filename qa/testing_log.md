@@ -34,6 +34,10 @@ subprocess (`test_cli_export_writes_the_same_json_as_the_api`).
 | F12 | Most bus "teleports" are stale-then-caught-up fixes, not GPS errors | data | kept — positions are right, timing is off |
 | F13 | The "continuous" August run is missing 28 of 307 hours, on the host side | docs | kept — README makes no "continuous" claim |
 | F14 | More than 8 concurrent requests → 500 "connection pool exhausted" (Python) | high | fixed |
+| F15 | Simulated layers sample the whole window before the budget is checked | medium | fixed |
+| F16 | API error text reaches the page through `innerHTML` unescaped | low | fixed |
+| F17 | Postgres dying after startup answers 500, not 503 | medium | fixed |
+| F18 | `/api/health` and the 503 details publish the whole connection string | medium | fixed |
 
 ### F1 — unparseable timestamp on a simulated layer is a 500
 
@@ -343,6 +347,173 @@ dropping tiles it no longer needs) are not counted as failures.
   design). The strip tests move the mouse over it before clicking, as a visitor would.
 - deck.gl logs five deprecation warnings per load (`rounded` → `jointRounded` /
   `capRounded` on the trips layers). Warnings, not errors; not changed.
+
+---
+
+## 2026-10-25 — code review
+
+A five-axis read of the whole project (correctness, readability, architecture, security,
+performance), not driven by a failing test. Four findings worth fixing, below; the rest
+were notes, and the two smallest are at the end of this section.
+
+### F15 — simulated layers sample the whole window before the budget is checked
+
+- **Found by**: code review, reading `_add_simulated()` against the F8 fix.
+- The same class of bug as F8, on the other side of the merge. F8 moved the recorded
+  layers' budget check ahead of the fetch; the simulated ones still did exactly what it
+  fixed. `gtfs_sim.simulate()` sampled every trip in the window into memory and only
+  then did `api_trips()` count the points against `MAX_POINTS`.
+- Worse than F8, because nothing bounded the window either: `hours` was only validated
+  `> 0`, and `start`/`end` could be years apart. `?layer=metro&hours=100000` expands to
+  ~4,170 service days, each scanning every trip in the feed, on one synchronous worker
+  thread, before any 413 could be returned.
+- **Fixed**, in two parts:
+  - `MAX_SIM_HOURS` (`MTL_MAX_SIM_HOURS`, default 48) caps the span a simulated layer
+    will materialise. `_sim_window()` rejects anything wider with a **400** naming both
+    the cap and the span asked for. Recorded layers are untouched: the cap is a property
+    of materialising a schedule, not of reading rows.
+  - `simulate()` takes `max_points`. In the per-trip loop, right after the cheap
+    time-overlap reject and **before** any projection, it adds up the grid samples each
+    trip could contribute and raises `gtfs_sim.OverBudget` as soon as the total exceeds
+    the budget. `_add_simulated()` passes what the recorded payload has not already
+    spent, and answers **413** with the same wording the recorded layers use.
+  - Like F8's row count these are **candidate** points: a trip later dropped for having
+    no shape or profile, or for yielding fewer than two samples, still counts. So the
+    total is an upper bound on the payload, which is what makes it safe to refuse on.
+  - `max_points=None` means no cap, so the CLI is unchanged — writing a huge file to
+    disk is a legitimate thing to ask for, exactly as with the database export.
+- The after-merge check in `api_trips()` stays, now as a final safety net rather than
+  the thing that catches simulated layers. Both sides refuse before building anything,
+  and both counts are upper bounds, so nothing is expected to reach it.
+- Tests: the window cap via `start`/`end` and via `hours`, both asserting `simulate()`
+  is never called; a recorded-only window proving the cap does not apply to it; the
+  budget refusal asserting `trip_stop_profile()` is never called, which is what proves
+  the check runs before sampling; the exact boundary (19 candidate points pass a budget
+  of 19 and fail one of 18); and recorded points counting against the simulated budget.
+  `simulate/test_gtfs_sim.py` adds `TestPointBudget`, including that `max_points=None`
+  returns exactly what omitting it returns.
+- `test_simulated_points_can_still_push_the_payload_over_the_budget` asserted the old
+  after-the-fact message and became
+  `test_recorded_points_count_against_the_simulated_budget`: the same scenario, now
+  settled before any sample is generated.
+
+### F16 — API error text reaches the page through `innerHTML` unescaped
+
+- **Found by**: code review, then confirmed at runtime —
+  `_resolve_layers("<img src=x onerror=alert(1)>")` answers
+  `400 unknown layer '<img src=x onerror=alert(1)>'. Valid: bus, aircraft, ...`, echoing
+  the parameter verbatim.
+- `describeFailure()` in `docs/index.html` concatenated `body.detail` into an HTML
+  string, which reaches the page as `status.notice` through `banner()` →
+  `renderStatus()` → `el.innerHTML`. `layer` is in the page's `PASSTHROUGH` list, so
+  `/docs/?layer=<img src=x onerror=alert(1)>` forwarded it, the 400 came back, and the
+  fallback banner wrote the tag into the DOM. There is no CSP on the page, so the
+  handler fired.
+- Low, not high: a localhost dev tool with no cookies, tokens or session to steal, and
+  unreachable on the Pages demo, where there is no API and the 404s are HTML rather than
+  JSON with a `detail`. But it is a real injection, and the file already had `esc()` and
+  already used it on the adjacent network-error path — these were missed calls, not a
+  missing design.
+- **Fixed**: escaped where the data enters rather than where it is displayed.
+  `describeFailure()` escapes `body.detail`, `url` and `res.status`; `attachOverlay()`
+  and the map `error` handler escape the exception text; the last-resort `.catch`
+  escapes `String(err.message || err)`; `buildScenePicker()` escapes both the scene
+  label and `describeScene()`, which returns plain text.
+- The two `banner("API unavailable: ...")` calls pass `apiErr.message` through
+  **unescaped on purpose**. By that point it is composed HTML whose data parts are each
+  already escaped, and whose `<code>` / `<b>` are deliberate; escaping it again would
+  print the tags literally and double-escape the payload.
+- Audited every other `innerHTML` in the file: `list.innerHTML = ""` (twice) and the
+  reset-view button are constants, and `buildLegend()` interpolates only `MODES`
+  constants and a trip count. Nothing else takes external data.
+- No test. There is no JS unit-test setup, and the e2e suite runs against the static
+  demo where this path cannot be reached, so no framework was added for it. Verified by
+  hand instead: with the API running, `/docs/?layer=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E`
+  shows the tag as literal text in the banner and raises no alert.
+
+### F17 — Postgres dying after startup answers 500, not 503
+
+- **Found by**: code review, then reproduced by terminating the pooled backend.
+- `db_conn()` converted `psycopg2.OperationalError` to a 503 only around `_get_pool()`.
+  Once the pool existed, a server that went away surfaced later — at `getconn()`, or on
+  the first statement of a connection the pool had handed back — as a bare
+  `OperationalError`, and `/api/health`, whose only job is to say `database: down`,
+  answered **500**.
+- Two failures, not one: the `except Exception:` branch called `conn.rollback()` on the
+  dead connection, which raised `InterfaceError: connection already closed` and
+  **replaced** the original error, so the 500 did not even name the real cause. The
+  reproduction showed exactly that — the traceback was the `InterfaceError`, not the
+  server-died error.
+- **Fixed**: `getconn()` failures become the existing "cannot connect" 503. Anything in
+  the borrow-prepare-yield-rollback block raising `OperationalError` or `InterfaceError`
+  becomes **503 "database unavailable (<label>): <first line>"**, chained with `from e`;
+  `HTTPException` and every other exception from the caller's body pass through
+  unchanged. The single cleanup rollback is wrapped so a failure there can never replace
+  the error that caused it, and a connection known to be broken goes back with
+  `putconn(conn, close=True)` so the next request gets a fresh one. The semaphore
+  release is untouched.
+- `/api/trips` and `/api/range` benefit too: a database failure mid-request is now a 503
+  on those as well, where it used to be a 500.
+- Tests (`tests/api/test_endpoints.py`): warm the pool, collect the backend pids the
+  pool is holding idle, `pg_terminate_backend` **only** those from a separate
+  connection, then assert health is 503 with `database: down` and that the detail
+  mentions neither `InterfaceError` nor "connection already closed"; that the next call
+  is 200 again, so the dead connection was discarded rather than reused; and the same
+  for `/api/range` and `/api/trips`. `pg_terminate_backend` worked for the test role, so
+  the monkeypatch fallback was not needed. The observed detail is
+  `database unavailable (dbname=sillage_test): server closed the connection unexpectedly`.
+- **Kotlin: the same bug, fixed the same way.** Checked rather than assumed: a probe gave
+  the app a distinctive `application_name` and terminated only its own sessions. Hikari's
+  borrow-time validation does **not** save it — it has a bypass window for a connection
+  used moments ago, so the dead one is handed back and fails inside `readOnly()`. The
+  port answered **500** `Internal Server Error: Connection is closed`, Hikari's
+  closed-proxy error, because `readOnly()`'s `finally { c.rollback() }` masked the real
+  exception exactly as Python's did.
+- **Fixed**: the cleanup rollback is wrapped, so the real error survives — `FATAL:
+  terminating connection due to administrator command`, **SQLState 57P01**. A
+  `SQLException` whose state is class **08** (the standard's "connection exception") or
+  exactly **57P01 / 57P02 / 57P03** (admin shutdown, crash shutdown, cannot connect now)
+  becomes the same 503 "database unavailable (<label>)". Deliberately *not* all of class
+  57: 57014 is `query_canceled`, a statement outcome rather than an outage. Nor 53300
+  `too_many_connections`, which fails at connect time and already answers 503.
+- Test: `DatabaseDiesMidLifeTest` — warm the pool, terminate this app's backends,
+  assert 503 with `database: down`, then 200 on the next call. Emptying the 57Pxx set
+  makes it fail with `expected: <503> but was: <500>`, so it is the mapping it tests.
+
+### F18 — `/api/health` and the 503 details publish the whole connection string
+
+- **Found by**: code review.
+- Python returned `{"status": "ok", "database": "up", "dsn": PG_DSN}` and put `PG_DSN`
+  into the "cannot connect" 503 detail; Kotlin did the same, `SillageFactory` passing the
+  raw DSN as `dsnLabel` to both `Database` and `SillageService`. `PG_DSN` is free-form
+  libpq and may carry `password=...`, or `user:password@` in the URI spelling. The
+  default has no password, so nothing had leaked — but nothing prevented it, and CORS
+  restricts browsers, not `curl`.
+- **Fixed**: one label format, identical in both services — `host`, `port`, `dbname` in
+  that order as space-separated `key=value`, only those present; `(default)` when none
+  are, `(unparseable)` when the string cannot be read. User, password, options and
+  everything else are dropped. Python's `dsn_label()` uses
+  `psycopg2.extensions.parse_dsn`, which reads both spellings; Kotlin's `dsnLabel()`
+  reuses the existing `parseUri` / `parseKeywords` branches. The JSON key stays `dsn`,
+  so the response shape is unchanged.
+- Tests: the same five label cases with the **same expected strings** on both sides, two
+  password-bearing DSNs asserting neither the user nor the password survives, and an
+  endpoint test that warms the pool, appends `password=hunter2` to `PG_DSN` and checks
+  `/api/health` still reports the database up without it. The existing
+  `test_data_endpoints_answer_503_not_500_when_postgres_is_down` compared only the
+  message prefix, so it needed no change; its label is now
+  `host=127.0.0.1 port=1 dbname=nowhere`.
+
+### Two cleanups
+
+`_get_pool()` had no lock, so two first requests arriving together could each build a
+`ThreadedConnectionPool` and the one that lost the assignment would be left holding an
+open connection nobody ever closed; creation is now double-checked under a module-level
+`threading.Lock`. And two docstrings had gone stale now that collection has ended —
+`get_range()` in `export/trips_query.py` claimed "both fetchers run continuously" and
+`api_range()` in `api/main.py` claimed the tables "currently intersect for only ~1.7
+hours". Both now explain why `overlap` exists without asserting anything about the
+current state of the recording. Neither needed a new test.
 
 ---
 
